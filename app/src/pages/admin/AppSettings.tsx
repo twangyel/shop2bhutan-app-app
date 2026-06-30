@@ -24,7 +24,7 @@ const sections = [
     title: 'Currency',
     icon: Settings,
     fields: [
-      { label: 'Currency Symbol', type: 'text', value: '₹' },
+      { label: 'Currency Symbol', type: 'text', value: 'Nu.' },
       { label: 'Decimal Places', type: 'number', value: '0' },
     ]
   },

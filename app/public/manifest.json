@@ -4,8 +4,8 @@
   "description": "Proxy shopping platform for Bhutan",
   "start_url": "/",
   "display": "standalone",
-  "background_color":="#F9FAFB",
-  "theme_color":"#F59E0B",
+  "background_color": "#F9FAFB",
+  "theme_color": "#F59E0B",
   "orientation": "portrait",
   "icons": [
     {

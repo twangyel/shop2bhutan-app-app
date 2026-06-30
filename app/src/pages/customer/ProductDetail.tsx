@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Share2, Heart, Star, Truck, ShoppingCart, Zap, Minus, Plus } from 'lucide-react';
-import { products, reviews } from '@/data/mockData';
+import { products, reviews, appSettings } from '@/data/mockData';
 import { useApp } from '@/context/AppContext';
 
 export default function ProductDetail() {
@@ -109,8 +109,8 @@ export default function ProductDetail() {
             <Truck size={20} className="text-emerald-500 mt-0.5" />
             <div>
               <p className="text-sm font-semibold text-gray-900">Delivery to your dzongkhag</p>
-              <p className="text-xs text-neutral-500 mt-0.5">Orders accepted from all 20 dzongkhags</p>
-              <p className="text-xs text-neutral-400 mt-0.5">Pickup/delivery hubs in Thimphu, Phuntsholing, and Paro</p>
+              <p className="text-xs text-neutral-500 mt-0.5">{appSettings.orderCoverage.label}</p>
+              <p className="text-xs text-neutral-400 mt-0.5">{appSettings.deliveryHubs.pickupLine}</p>
             </div>
           </div>
         </div>

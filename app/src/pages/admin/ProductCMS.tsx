@@ -80,7 +80,7 @@ export default function ProductCMS() {
                     </td>
                     <td className="px-4 py-3 text-sm font-medium max-w-[200px] truncate">{product.name}</td>
                     <td className="px-4 py-3 text-sm text-neutral-600">{category?.name || '-'}</td>
-                    <td className="px-4 py-3 text-sm font-medium">₹{product.price.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-sm font-medium">Nu. {product.price.toLocaleString()}</td>
                     <td className="px-4 py-3 text-sm">{product.stockQuantity}</td>
                     <td className="px-4 py-3 text-sm">{product.rating} ★</td>
                     <td className="px-4 py-3">

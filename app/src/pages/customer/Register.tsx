@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Mail, Phone, MapPin, Lock, Eye, EyeOff } from 'lucide-react';
 import { DZONGKHAGS } from '@/data/mockData';
+import Logo from '@/components/shared/Logo';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -40,9 +41,16 @@ export default function Register() {
   return (
     <div className="min-h-screen bg-white py-8 px-6">
       <div className="max-w-sm mx-auto">
-        <button onClick={() => navigate('/login')} className="text-sm text-neutral-500 mb-4">← Back to Login</button>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Create Account</h1>
-        <p className="text-sm text-neutral-500 mb-6">Join Shop2Bhutan to start shopping</p>
+        <div className="flex items-center gap-2 mb-4">
+          <button onClick={() => navigate('/login')} className="text-sm text-neutral-500">← Back to Login</button>
+        </div>
+        <div className="flex items-center gap-3 mb-6">
+          <Logo size="lg" showText={false} />
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Create Account</h1>
+            <p className="text-sm text-neutral-500">Join Shop2Bhutan to start shopping</p>
+          </div>
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

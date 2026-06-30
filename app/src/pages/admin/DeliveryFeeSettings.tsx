@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Save, Download, Upload } from 'lucide-react';
-import { deliveryFeeRules, deliveryHubs } from '@/data/mockData';
+import { deliveryFeeRules, deliveryHubs, appSettings } from '@/data/mockData';
 
 export default function DeliveryFeeSettings() {
   const [activeHub, setActiveHub] = useState(deliveryHubs[0].id);
@@ -16,7 +16,7 @@ export default function DeliveryFeeSettings() {
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Delivery Fees</h2>
-        <p className="text-sm text-neutral-500">Orders accepted from all 20 dzongkhags. Hubs: Thimphu, Phuntsholing, Paro.</p>
+        <p className="text-sm text-neutral-500">{appSettings.orderCoverage.label}. Hubs: {appSettings.deliveryHubs.hubNamesJoined}.</p>
       </div>
 
       {/* Hub Tabs */}
@@ -53,8 +53,8 @@ export default function DeliveryFeeSettings() {
             <thead>
               <tr className="bg-neutral-50 border-b border-neutral-200">
                 <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Dzongkhag</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Base Fee (₹)</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Per Kg Fee (₹)</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Base Fee (Nu.)</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Per Kg Fee (Nu.)</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Est. Days</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase">Status</th>
               </tr>

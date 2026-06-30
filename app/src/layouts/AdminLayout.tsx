@@ -2,10 +2,11 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ClipboardList, CreditCard, Users, Package,
   Grid3X3, Image, Truck, Percent, Wallet, Settings, FileText,
-  LogOut, ChevronDown, Search, Bell
+  LogOut, ChevronDown, Search, Bell, ClipboardCheck
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { useState } from 'react';
+import Logo from '@/components/shared/Logo';
 
 const navGroups = [
   {
@@ -13,6 +14,7 @@ const navGroups = [
     items: [
       { path: '/admin', label: 'Dashboard', icon: LayoutDashboard },
       { path: '/admin/orders', label: 'Orders', icon: ClipboardList },
+      { path: '/admin/parcels', label: 'Parcels', icon: ClipboardCheck },
       { path: '/admin/payments', label: 'Payments', icon: CreditCard },
       { path: '/admin/customers', label: 'Customers', icon: Users },
     ]
@@ -49,9 +51,7 @@ export default function AdminLayout() {
       <aside className="w-64 bg-white border-r border-neutral-200 flex flex-col fixed h-full z-40 overflow-y-auto">
         {/* Logo */}
         <div className="h-16 flex items-center gap-2 px-4 border-b border-neutral-100">
-          <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
-            <ShoppingBag className="w-5 h-5 text-white" />
-          </div>
+          <Logo size="sm" showText={false} />
           <span className="font-bold text-gray-900">Shop2Bhutan</span>
           <span className="px-2 py-0.5 bg-gray-900 text-white text-[10px] font-medium rounded-full">Admin</span>
         </div>
@@ -149,10 +149,4 @@ export default function AdminLayout() {
   );
 }
 
-function ShoppingBag(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>
-    </svg>
-  );
-}
+

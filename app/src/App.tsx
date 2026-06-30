@@ -19,10 +19,14 @@ import QuotationReview from '@/pages/customer/QuotationReview';
 import PaymentUpload from '@/pages/customer/PaymentUpload';
 import Orders from '@/pages/customer/Orders';
 import OrderDetail from '@/pages/customer/OrderDetail';
+import Account from '@/pages/customer/Account';
 import Profile from '@/pages/customer/Profile';
 import Addresses from '@/pages/customer/Addresses';
 import Support from '@/pages/customer/Support';
 import Notifications from '@/pages/customer/Notifications';
+import Parcel from '@/pages/customer/Parcel';
+import ParcelBooking from '@/pages/customer/ParcelBooking';
+import MyParcels from '@/pages/customer/MyParcels';
 
 // Admin Pages
 import Dashboard from '@/pages/admin/Dashboard';
@@ -39,6 +43,8 @@ import ServiceChargeSettings from '@/pages/admin/ServiceChargeSettings';
 import PaymentMethodSettings from '@/pages/admin/PaymentMethodSettings';
 import AppSettings from '@/pages/admin/AppSettings';
 import FAQCMS from '@/pages/admin/FAQCMS';
+import AdminParcelTrips from '@/pages/admin/ParcelTrips';
+import AdminParcelRequests from '@/pages/admin/ParcelRequests';
 
 export default function App() {
   return (
@@ -61,10 +67,14 @@ export default function App() {
           <Route path="/payment/:orderId" element={<PaymentUpload />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/order/:id" element={<OrderDetail />} />
+          <Route path="/account" element={<Account />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/addresses" element={<Addresses />} />
           <Route path="/support" element={<Support />} />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/parcel" element={<Parcel />} />
+          <Route path="/parcel-booking/:tripId" element={<ParcelBooking />} />
+          <Route path="/my-parcels" element={<MyParcels />} />
         </Route>
 
         {/* Admin Routes */}
@@ -73,6 +83,8 @@ export default function App() {
           <Route path="orders" element={<OrdersPanel />} />
           <Route path="orders/:id" element={<AdminOrderDetail />} />
           <Route path="quotation/:id" element={<QuotationBuilder />} />
+          <Route path="parcels" element={<AdminParcelTrips />} />
+          <Route path="parcel-requests" element={<AdminParcelRequests />} />
           <Route path="payments" element={<PaymentsVerification />} />
           <Route path="customers" element={<CustomersPanel />} />
           <Route path="products" element={<ProductCMS />} />

@@ -4,6 +4,7 @@ import {
   Lock, Globe, Moon, FileText, Shield, Info, LogOut, ChevronRight
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { appSettings } from '@/data/mockData';
 
 const menuGroups = [
   {
@@ -71,8 +72,8 @@ export default function Profile() {
           </div>
           <div>
             <p className="text-sm font-semibold text-gray-900">Delivery Hubs</p>
-            <p className="text-[11px] text-neutral-500">Thimphu, Phuntsholing, Paro</p>
-            <p className="text-[10px] text-neutral-400">Orders accepted from all 20 dzongkhags</p>
+            <p className="text-[11px] text-neutral-500">{appSettings.deliveryHubs.hubNamesJoined}</p>
+            <p className="text-[10px] text-neutral-400">{appSettings.orderCoverage.label}</p>
           </div>
         </div>
       </div>

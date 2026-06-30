@@ -3,7 +3,7 @@ import {
   ArrowLeft, Clock, FileText, CreditCard, Package, Truck,
   MapPin, CheckCircle, XCircle, ChevronRight
 } from 'lucide-react';
-import { orders } from '@/data/mockData';
+import { orders, appSettings } from '@/data/mockData';
 import StatusBadge from '@/components/shared/StatusBadge';
 import TrackingTimeline from '@/components/shared/TrackingTimeline';
 
@@ -105,7 +105,7 @@ export default function OrderDetail() {
               <Truck size={18} className="text-emerald-500 mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-sm font-semibold">{order.deliveryHub.name}</p>
-                <p className="text-xs text-neutral-500">Orders accepted from all 20 dzongkhags. Hubs: Thimphu, Phuntsholing, Paro.</p>
+                <p className="text-xs text-neutral-500">{appSettings.orderCoverage.label}. Hubs: {appSettings.deliveryHubs.hubNamesJoined}.</p>
               </div>
             </div>
           </div>

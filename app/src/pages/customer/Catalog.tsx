@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, SlidersHorizontal, ShoppingCart, ArrowLeft } from 'lucide-react';
+import { Search, SlidersHorizontal, ShoppingCart, ArrowLeft, Link2 } from 'lucide-react';
 import { categories, products } from '@/data/mockData';
 import { useApp } from '@/context/AppContext';
 import ProductCard from '@/components/shared/ProductCard';
@@ -128,6 +128,23 @@ export default function Catalog() {
           </div>
         </div>
       )}
+
+      {/* Paste Link CTA */}
+      <div className="px-4 pt-4">
+        <button
+          onClick={() => navigate('/paste-link')}
+          className="w-full flex items-center gap-3 p-4 bg-gradient-to-r from-amber-500 to-amber-600 rounded-2xl text-white shadow-md active:scale-[0.98] transition-transform"
+        >
+          <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Link2 size={20} />
+          </div>
+          <div className="text-left flex-1">
+            <p className="font-semibold text-sm">Have a product link?</p>
+            <p className="text-xs text-white/80">Paste any Amazon, Flipkart, Myntra or Meesho link</p>
+          </div>
+          <span className="text-xs font-medium bg-white/20 px-3 py-1 rounded-full">Paste</span>
+        </button>
+      </div>
 
       {/* Product Grid */}
       <div className="px-4 py-4">

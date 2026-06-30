@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Minus, Plus, Trash2, MapPin, ShoppingCart, ArrowRight } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
-import { deliveryHubs } from '@/data/mockData';
+import { deliveryHubs, appSettings } from '@/data/mockData';
 import EmptyState from '@/components/shared/EmptyState';
 
 export default function Cart() {
@@ -92,7 +92,7 @@ export default function Cart() {
             <div className="flex-1">
               <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Pickup Hub</p>
               <p className="text-sm font-semibold text-gray-900 mt-0.5">{hub?.name || 'Thimphu Hub'}</p>
-              <p className="text-xs text-neutral-500 mt-0.5">Orders from all 20 dzongkhags. Hubs: Thimphu, Phuntsholing, Paro.</p>
+              <p className="text-xs text-neutral-500 mt-0.5">{appSettings.orderCoverage.shortLabel}. Hubs: {appSettings.deliveryHubs.hubNamesJoined}.</p>
             </div>
             <button className="text-xs text-amber-600 font-medium">Change</button>
           </div>
