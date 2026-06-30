@@ -37,7 +37,7 @@ export type PaymentProofInput = {
 };
 
 const ORDER_OWNER_COLUMNS = ['user_id', 'customer_id', 'profile_id'];
-const ORDER_LOOKUP_COLUMNS = ['id', 'order_id', 'order_number'];
+const ORDER_LOOKUP_COLUMNS = ['id', 'order_no', 'order_id', 'order_number'];
 
 const PLACEHOLDER_PRODUCT_IMAGE =
   'data:image/svg+xml;utf8,' +
@@ -160,6 +160,7 @@ export function normalizePaymentStatus(status: unknown): PaymentStatus {
 
   const map: Record<string, PaymentStatus> = {
     pending: 'pending',
+    pending_verification: 'pending',
     partial: 'pending',
     uploaded: 'pending',
     verified: 'verified',
@@ -220,19 +221,19 @@ function makeShippingAddress(row: AnyRow, userId: string): Address {
 
 function itemBelongsToOrder(item: AnyRow, row: AnyRow) {
   const itemOrderId = String(item.order_id ?? '');
-  const possibleIds = [row.id, row.order_id, row.order_number].filter(Boolean).map(String);
+  const possibleIds = [row.id, row.order_no, row.order_id, row.order_number].filter(Boolean).map(String);
   return possibleIds.includes(itemOrderId);
 }
 
 function quotationBelongsToOrder(quotation: AnyRow, row: AnyRow) {
   const quotationOrderId = String(quotation.order_id ?? '');
-  const possibleIds = [row.id, row.order_id, row.order_number].filter(Boolean).map(String);
+  const possibleIds = [row.id, row.order_no, row.order_id, row.order_number].filter(Boolean).map(String);
   return possibleIds.includes(quotationOrderId);
 }
 
 function paymentBelongsToOrder(payment: AnyRow, row: AnyRow) {
   const paymentOrderId = String(payment.order_id ?? '');
-  const possibleIds = [row.id, row.order_id, row.order_number].filter(Boolean).map(String);
+  const possibleIds = [row.id, row.order_no, row.order_id, row.order_number].filter(Boolean).map(String);
   return possibleIds.includes(paymentOrderId);
 }
 
@@ -242,10 +243,10 @@ function makeOrderItems(row: AnyRow, relatedItems: AnyRow[]): OrderItem[] {
     productId: firstString(item, ['product_id'], ''),
     sourceUrl: firstString(item, ['source_url', 'product_url', 'url'], ''),
     sourcePlatform: firstString(item, ['source_platform', 'platform'], 'internal') as OrderItem['sourcePlatform'],
-    productName: firstString(item, ['product_name', 'name', 'title'], 'Product item'),
-    productImage: firstString(item, ['product_image', 'image_url', 'image', 'screenshot_url'], PLACEHOLDER_PRODUCT_IMAGE),
+    productName: firstString(item, ['title_snapshot', 'product_name', 'item_name', 'name', 'title'], 'Product item'),
+    productImage: firstString(item, ['image_path', 'attachment_path', 'product_image', 'image_url', 'image', 'screenshot_url'], PLACEHOLDER_PRODUCT_IMAGE),
     quantity: firstNumber(item, ['quantity', 'qty'], 1),
-    unitPrice: firstNumber(item, ['unit_price', 'price', 'quoted_price', 'product_price'], 0),
+    unitPrice: firstNumber(item, ['quoted_unit_price', 'estimated_price', 'unit_price', 'price', 'quoted_price', 'product_price'], 0),
     attributes: firstJsonObject(item, ['attributes', 'selected_attributes']) as Record<string, string>,
   }));
 
@@ -289,7 +290,7 @@ function makeQuotationItems(quotation: AnyRow, orderItems: OrderItem[], quotatio
     return directItems.map((item, index) => ({
       id: firstString(item, ['id'], `quote-item-${quoteId}-${index}`),
       orderItemId: firstString(item, ['order_item_id'], orderItems[index]?.id ?? ''),
-      productName: firstString(item, ['product_name', 'name', 'title'], orderItems[index]?.productName ?? 'Quoted item'),
+      productName: firstString(item, ['item_name', 'product_name', 'name', 'title'], orderItems[index]?.productName ?? 'Quoted item'),
       productImage: firstString(item, ['product_image', 'image_url', 'image'], orderItems[index]?.productImage ?? PLACEHOLDER_PRODUCT_IMAGE),
       quantity: firstNumber(item, ['quantity', 'qty'], orderItems[index]?.quantity ?? 1),
       unitPrice: firstNumber(item, ['unit_price', 'price', 'quoted_price'], orderItems[index]?.unitPrice ?? 0),
@@ -313,7 +314,7 @@ function makeQuotation(quotation: AnyRow | undefined, orderItems: OrderItem[], q
   if (!quotation) return undefined;
 
   const items = makeQuotationItems(quotation, orderItems, quotationItems);
-  const productTotal = firstNumber(quotation, ['product_total', 'product_price', 'subtotal'], items.reduce((sum, item) => sum + item.totalPrice, 0));
+  const productTotal = firstNumber(quotation, ['product_subtotal', 'product_total', 'product_price', 'subtotal'], items.reduce((sum, item) => sum + item.totalPrice, 0));
   const serviceCharge = firstNumber(quotation, ['service_charge', 'service_fee'], 0);
   const deliveryFee = firstNumber(quotation, ['delivery_fee', 'shipping_fee'], 0);
   const taxAmount = firstNumber(quotation, ['tax_amount', 'tax'], 0);
@@ -345,7 +346,7 @@ function makePayment(payment: AnyRow | undefined): Payment | undefined {
     amount: firstNumber(payment, ['amount', 'total_amount', 'advance_paid'], 0),
     method: firstString(payment, ['method', 'payment_method'], ''),
     transactionId: firstString(payment, ['transaction_id', 'reference_id', 'txn_id'], ''),
-    screenshotUrl: firstString(payment, ['screenshot_url', 'payment_proof_url', 'proof_url'], ''),
+    screenshotUrl: firstString(payment, ['proof_file_path', 'screenshot_url', 'payment_proof_url', 'proof_url'], ''),
     status: normalizePaymentStatus(firstValue(payment, ['status'])),
     verifiedBy: firstString(payment, ['verified_by'], ''),
     verifiedAt: firstString(payment, ['verified_at'], ''),
@@ -362,7 +363,7 @@ function mapOrderRow(row: AnyRow, related: RelatedRows, authUserId: string, auth
 
   return {
     id: firstString(row, ['id'], ''),
-    orderNumber: firstString(row, ['order_number', 'order_id', 'public_id'], firstString(row, ['id'], '').slice(0, 8).toUpperCase()),
+    orderNumber: firstString(row, ['order_no', 'order_number', 'order_id', 'public_id'], firstString(row, ['id'], '').slice(0, 8).toUpperCase()),
     userId: customerId,
     user: makeFallbackUser(customerId, authEmail),
     items,
@@ -398,7 +399,7 @@ async function safeSelectIn(table: string, column: string, values: string[]) {
 async function fetchRelatedRows(orderRows: AnyRow[]): Promise<RelatedRows> {
   const dbIds = orderRows.map((row) => String(row.id ?? '')).filter(Boolean);
   const publicIds = orderRows
-    .flatMap((row) => [row.order_id, row.order_number, row.public_id])
+    .flatMap((row) => [row.order_no, row.order_id, row.order_number, row.public_id])
     .filter(Boolean)
     .map(String);
 
@@ -537,15 +538,50 @@ async function findExistingPayment(order: Order) {
 
   if (!dbLookup.error && dbLookup.data) return makePayment(dbLookup.data as AnyRow);
 
-  const publicLookup = await supabase
-    .from('payments')
-    .select('*')
-    .eq('order_id', order.orderNumber)
-    .maybeSingle();
-
-  if (!publicLookup.error && publicLookup.data) return makePayment(publicLookup.data as AnyRow);
-
   return undefined;
+}
+
+function paymentMethodToDbValue(paymentMethodName: string) {
+  const raw = paymentMethodName.toLowerCase();
+  if (raw.includes('wallet') || raw.includes('mbo') || raw.includes('mpay') || raw.includes('mobile')) {
+    return 'mobile_wallet';
+  }
+  if (raw.includes('bank') || raw.includes('transfer') || raw.includes('bob') || raw.includes('bnb') || raw.includes('tbank')) {
+    return 'bank_transfer';
+  }
+  return 'other';
+}
+
+async function insertPaymentWithKnownSchema(payload: {
+  orderId: string;
+  quotationId?: string;
+  userId: string;
+  amount: number;
+  paymentMethodName: string;
+  transactionId: string;
+  path: string;
+}) {
+  const paymentTypeCandidates = ['full', 'advance', 'partial', 'balance', 'deposit', 'confirm_later'];
+  let lastError: unknown = null;
+
+  for (const paymentType of paymentTypeCandidates) {
+    const { error } = await supabase.from('payments').insert({
+      order_id: payload.orderId,
+      quotation_id: payload.quotationId || null,
+      user_id: payload.userId,
+      payment_type: paymentType,
+      payment_method: paymentMethodToDbValue(payload.paymentMethodName),
+      amount: payload.amount,
+      currency: 'BTN',
+      proof_file_path: payload.path,
+      admin_notes: `Customer reference: ${payload.transactionId}. Customer selected method: ${payload.paymentMethodName}`,
+    });
+
+    if (!error) return;
+    lastError = error;
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unable to create payment row. Check public.payment_type enum values.');
 }
 
 export async function submitCustomerPaymentProof(input: PaymentProofInput) {
@@ -560,35 +596,36 @@ export async function submitCustomerPaymentProof(input: PaymentProofInput) {
 
   if (uploadError) throw uploadError;
 
-  const existingPayment = await findExistingPayment(order);
-  const basePayload = {
-    order_id: order.id,
-    amount,
-    method: paymentMethodName,
-    transaction_id: transactionId,
-    screenshot_url: path,
-    status: 'pending' as PaymentStatus,
-    notes: `Uploaded by customer. Storage bucket: order-screenshots. Path: ${path}`,
-  };
+  try {
+    const existingPayment = await findExistingPayment(order);
 
-  if (existingPayment?.id) {
-    const { error } = await supabase.from('payments').update(basePayload).eq('id', existingPayment.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.from('payments').insert(basePayload);
-    if (error) {
-      const legacyPayload = {
-        order_id: order.orderNumber,
-        total_amount: amount,
-        payment_method: paymentMethodName,
-        payment_proof_url: path,
-        status: 'pending',
-        updated_at: new Date().toISOString(),
-      };
+    if (existingPayment?.id) {
+      const { error } = await supabase
+        .from('payments')
+        .update({
+          amount,
+          payment_method: paymentMethodToDbValue(paymentMethodName),
+          proof_file_path: path,
+          admin_notes: `Customer reference: ${transactionId}. Customer selected method: ${paymentMethodName}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingPayment.id);
 
-      const legacy = await supabase.from('payments').insert(legacyPayload);
-      if (legacy.error) throw error;
+      if (error) throw error;
+    } else {
+      await insertPaymentWithKnownSchema({
+        orderId: order.id,
+        quotationId: order.quotation?.id,
+        userId,
+        amount,
+        paymentMethodName,
+        transactionId,
+        path,
+      });
     }
+  } catch (error) {
+    await supabase.storage.from('order-screenshots').remove([path]);
+    throw error;
   }
 
   if (order.quotation?.id) {
@@ -606,4 +643,340 @@ export async function submitCustomerPaymentProof(input: PaymentProofInput) {
   }
 
   return { path };
+}
+
+
+// ============ Step 06C: Product-link preview + paste-link customer order creation ============
+
+export type ProductLinkPreview = {
+  url: string;
+  platform: string;
+  title: string;
+  image?: string;
+  price?: number;
+  currency?: string;
+  fetched: boolean;
+  message?: string;
+};
+
+export type PasteLinkOrderItemInput = {
+  sourceUrl: string;
+  sourcePlatform?: string;
+  productName?: string;
+  productImage?: string;
+  price?: number;
+  quantity?: number;
+  notes?: string;
+};
+
+export type SubmitPasteLinkOrderInput = {
+  userId: string;
+  email?: string | null;
+  customerName: string;
+  customerPhone: string;
+  deliveryAddress?: string | null;
+  customerNotes?: string | null;
+  items: PasteLinkOrderItemInput[];
+};
+
+export type SubmitPasteLinkOrderResult = {
+  orderId: string;
+  orderNo: string;
+};
+
+function cleanText(value: unknown) {
+  return String(value ?? '').trim();
+}
+
+export function normalizeProductUrl(value: string) {
+  const trimmed = cleanText(value);
+  if (!trimmed) return '';
+
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const url = new URL(withProtocol);
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+export function detectSourcePlatformFromUrl(url: string) {
+  const raw = String(url ?? '').toLowerCase();
+
+  if (raw.includes('amazon.')) return 'amazon';
+  if (raw.includes('flipkart.')) return 'flipkart';
+  if (raw.includes('myntra.')) return 'myntra';
+  if (raw.includes('meesho.')) return 'meesho';
+
+  return 'other';
+}
+
+function platformToDbValue(platformOrUrl: string | undefined) {
+  const raw = String(platformOrUrl ?? '').toLowerCase();
+
+  if (raw === 'amazon' || raw.includes('amazon.')) return 'amazon';
+  if (raw === 'flipkart' || raw.includes('flipkart.')) return 'flipkart';
+  if (raw === 'myntra' || raw.includes('myntra.')) return 'myntra';
+  if (raw === 'meesho' || raw.includes('meesho.')) return 'meesho';
+
+  return 'other';
+}
+
+function productNameFromPlatform(platform: string) {
+  if (!platform || platform === 'other') return 'Pasted product link';
+  return `Product from ${platform.charAt(0).toUpperCase()}${platform.slice(1)}`;
+}
+
+function fallbackProductPreview(url: string, message?: string): ProductLinkPreview {
+  const normalizedUrl = normalizeProductUrl(url) || cleanText(url);
+  const platform = detectSourcePlatformFromUrl(normalizedUrl);
+
+  return {
+    url: normalizedUrl,
+    platform,
+    title: productNameFromPlatform(platform),
+    fetched: false,
+    message: message || 'Product details could not be fetched automatically. You can still edit the item and submit it.',
+  };
+}
+
+function normalizePreviewPayload(payload: unknown, requestedUrl: string): ProductLinkPreview {
+  const raw = (payload ?? {}) as AnyRow;
+  const preview = (raw.preview ?? raw) as AnyRow;
+  const normalizedUrl = normalizeProductUrl(String(preview.url ?? requestedUrl)) || requestedUrl;
+  const platform = cleanText(preview.platform) || detectSourcePlatformFromUrl(normalizedUrl);
+  const title = cleanText(preview.title) || productNameFromPlatform(platform);
+  const image = cleanText(preview.image || preview.imageUrl || preview.productImage);
+  const priceValue = Number(preview.price ?? preview.amount ?? 0);
+  const price = Number.isFinite(priceValue) && priceValue > 0 ? priceValue : undefined;
+
+  return {
+    url: normalizedUrl,
+    platform,
+    title,
+    image: image || undefined,
+    price,
+    currency: cleanText(preview.currency) || undefined,
+    fetched: Boolean(preview.fetched ?? raw.ok ?? title),
+    message: cleanText(preview.message || raw.message),
+  };
+}
+
+export async function fetchProductLinkPreview(url: string): Promise<ProductLinkPreview> {
+  const normalizedUrl = normalizeProductUrl(url);
+
+  if (!normalizedUrl) {
+    return fallbackProductPreview(url, 'Please enter a valid product URL.');
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke('product-link-preview', {
+      body: { url: normalizedUrl },
+    });
+
+    if (error) {
+      console.warn('[customerOrders] product preview fallback:', error);
+      return fallbackProductPreview(
+        normalizedUrl,
+        'Auto-fetch is not available yet. Deploy the product-link-preview Edge Function, or edit the item manually.'
+      );
+    }
+
+    const preview = normalizePreviewPayload(data, normalizedUrl);
+
+    if (!preview.title || preview.title === 'Pasted product link') {
+      return fallbackProductPreview(normalizedUrl);
+    }
+
+    return preview;
+  } catch (error) {
+    console.warn('[customerOrders] product preview failed:', error);
+    return fallbackProductPreview(normalizedUrl);
+  }
+}
+
+function isEnumError(error: unknown) {
+  const message = String((error as { message?: string })?.message ?? '').toLowerCase();
+  return (
+    message.includes('invalid input value for enum') ||
+    message.includes('violates check constraint') ||
+    message.includes('not present in enum')
+  );
+}
+
+async function insertPasteLinkOrderRow(input: SubmitPasteLinkOrderInput) {
+  const orderTypeCandidates = ['paste_link', 'external_link', 'link_order'];
+
+  let lastError: unknown = null;
+
+  for (const orderType of orderTypeCandidates) {
+    const { data, error } = await supabase
+      .from('orders')
+      .insert({
+        user_id: input.userId,
+        order_type: orderType,
+        customer_name: cleanText(input.customerName),
+        customer_phone: cleanText(input.customerPhone),
+        customer_email: cleanText(input.email),
+        delivery_address: cleanText(input.deliveryAddress) || null,
+        customer_notes: cleanText(input.customerNotes) || null,
+      })
+      .select('id, order_no')
+      .single();
+
+    if (!error && data) {
+      return data as { id: string; order_no: string | null };
+    }
+
+    lastError = error;
+
+    if (error && !isEnumError(error)) {
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unable to create paste-link order.');
+}
+
+function makeOrderItemPayloads(params: {
+  orderId: string;
+  itemType: string;
+  items: PasteLinkOrderItemInput[];
+  forceOtherPlatform?: boolean;
+}) {
+  return params.items.map((item) => {
+    const sourceUrl = normalizeProductUrl(item.sourceUrl) || cleanText(item.sourceUrl);
+    const detectedPlatform = detectSourcePlatformFromUrl(sourceUrl);
+    const dbPlatform = params.forceOtherPlatform
+      ? 'other'
+      : platformToDbValue(item.sourcePlatform || detectedPlatform || sourceUrl);
+
+    const quantity = Number(item.quantity ?? 1);
+    const price = Number(item.price ?? 0);
+    const itemNotes = cleanText(item.notes);
+
+    return {
+      order_id: params.orderId,
+      item_type: params.itemType,
+      source_platform: dbPlatform,
+      source_url: sourceUrl,
+      title_snapshot:
+        cleanText(item.productName) ||
+        productNameFromPlatform(dbPlatform),
+      image_path: cleanText(item.productImage) || null,
+      attachment_path: null,
+      variant_text: itemNotes || null,
+      quantity: Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1,
+      customer_notes: itemNotes || null,
+      estimated_price: Number.isFinite(price) && price > 0 ? price : null,
+    };
+  });
+}
+
+async function insertPasteLinkOrderItems(orderId: string, items: PasteLinkOrderItemInput[]) {
+  const itemTypeCandidates = ['paste_link', 'external_link', 'link', 'other'];
+
+  let lastError: unknown = null;
+
+  for (const forceOtherPlatform of [false, true]) {
+    for (const itemType of itemTypeCandidates) {
+      const payloads = makeOrderItemPayloads({
+        orderId,
+        itemType,
+        items,
+        forceOtherPlatform,
+      });
+
+      const { error } = await supabase.from('order_items').insert(payloads);
+
+      if (!error) return;
+
+      lastError = error;
+
+      if (error && !isEnumError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unable to create paste-link order items.');
+}
+
+async function addCustomerSubmittedTrackingEvent(orderId: string, userId: string) {
+  const statusCandidates = ['pending', 'pending_confirmation'];
+
+  for (const status of statusCandidates) {
+    const { error } = await supabase.from('tracking_events').insert({
+      order_id: orderId,
+      status,
+      title: 'Order submitted',
+      message: 'Your paste-link order request has been received by Shop2Bhutan.',
+      location: 'Online',
+      visible_to_customer: true,
+      created_by: userId,
+    });
+
+    if (!error) return;
+
+    if (!isEnumError(error)) {
+      console.warn('[customerOrders] tracking event skipped:', error);
+      return;
+    }
+  }
+}
+
+export async function submitPasteLinkOrder(input: SubmitPasteLinkOrderInput): Promise<SubmitPasteLinkOrderResult> {
+  if (!input.userId) {
+    throw new Error('Please sign in before submitting your order.');
+  }
+
+  if (!cleanText(input.customerName)) {
+    throw new Error('Customer name is required.');
+  }
+
+  if (!cleanText(input.customerPhone)) {
+    throw new Error('Phone number is required.');
+  }
+
+  const cleanItems = input.items
+    .map((item) => ({
+      ...item,
+      sourceUrl: normalizeProductUrl(item.sourceUrl) || cleanText(item.sourceUrl),
+      productName: cleanText(item.productName),
+      productImage: cleanText(item.productImage),
+      notes: cleanText(item.notes),
+      quantity: Number(item.quantity ?? 1),
+      price: Number(item.price ?? 0),
+    }))
+    .filter((item) => item.sourceUrl);
+
+  if (cleanItems.length === 0) {
+    throw new Error('Add at least one product link before submitting.');
+  }
+
+  const orderRow = await insertPasteLinkOrderRow({
+    ...input,
+    items: cleanItems,
+  });
+
+  try {
+    await insertPasteLinkOrderItems(orderRow.id, cleanItems);
+  } catch (error) {
+    try {
+      await supabase.from('orders').delete().eq('id', orderRow.id).eq('user_id', input.userId);
+    } catch (cleanupError) {
+      console.warn('[customerOrders] cleanup after failed paste-link item insert failed:', cleanupError);
+    }
+
+    throw error;
+  }
+
+  await addCustomerSubmittedTrackingEvent(orderRow.id, input.userId);
+
+  return {
+    orderId: orderRow.id,
+    orderNo: orderRow.order_no || orderRow.id,
+  };
 }
