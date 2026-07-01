@@ -9,13 +9,27 @@ import {
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
+type AdminRole = 'anon' | 'customer' | 'admin' | 'super_admin';
+
+type CustomerProfile = {
+  id?: string | null;
+  full_name?: string | null;
+  name?: string | null;
+  phone?: string | null;
+  default_dzongkhag_id?: string | null;
+  avatar_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+};
+
 type SessionContext = {
   user_id: string | null;
   email: string | null;
-  role: 'anon' | 'customer' | 'admin' | 'super_admin';
+  role: AdminRole;
   is_admin: boolean;
   is_super_admin: boolean;
-  profile: Record<string, unknown> | null;
+  profile: CustomerProfile | null;
 };
 
 type AuthContextValue = {
@@ -38,37 +52,92 @@ const anonContext: SessionContext = {
   profile: null,
 };
 
+function cleanString(value: unknown) {
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildProfileInsert(user: User) {
+  const metadata = user.user_metadata ?? {};
+
+  const fullName =
+    cleanString(metadata.full_name) ??
+    cleanString(metadata.name) ??
+    cleanString(user.email?.split('@')[0]) ??
+    'Customer';
+
+  const phone = cleanString(metadata.phone);
+  const avatarUrl = cleanString(metadata.avatar_url) ?? cleanString(metadata.picture);
+
+  const payload: Record<string, string> = {
+    id: user.id,
+    full_name: fullName,
+  };
+
+  if (phone) payload.phone = phone;
+  if (avatarUrl) payload.avatar_url = avatarUrl;
+
+  return payload;
+}
+
+async function ensureProfileRow(user: User) {
+  const payload = buildProfileInsert(user);
+
+  const { error } = await supabase
+    .from('profiles')
+    .upsert(payload, {
+      onConflict: 'id',
+      ignoreDuplicates: true,
+    });
+
+  if (error) {
+    // Do not block login/admin guard if profile insert is blocked by RLS/schema.
+    // The session context RPC still runs below and admin role remains separate.
+    console.warn('Profile sync skipped:', error.message);
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [context, setContext] = useState<SessionContext | null>(null);
+
+  const loadSessionContext = async (activeSession: Session | null) => {
+    setSession(activeSession);
+
+    if (!activeSession?.user) {
+      setContext(anonContext);
+      return;
+    }
+
+    await ensureProfileRow(activeSession.user);
+
+    const { data, error } = await supabase.rpc('get_my_session_context');
+
+    if (error) {
+      console.error('Failed to load session context:', error);
+
+      setContext({
+        ...anonContext,
+        user_id: activeSession.user.id,
+        email: activeSession.user.email ?? null,
+        role: 'customer',
+      });
+
+      return;
+    }
+
+    setContext(data as SessionContext);
+  };
 
   const refreshContext = async () => {
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
-    setSession(session);
-
-    if (!session?.user) {
-      setContext(anonContext);
-      return;
-    }
-
-    const { data, error } = await supabase.rpc('get_my_session_context');
-
-    if (error) {
-      console.error('Failed to load session context:', error);
-      setContext({
-        ...anonContext,
-        user_id: session.user.id,
-        email: session.user.email ?? null,
-        role: 'customer',
-      });
-      return;
-    }
-
-    setContext(data as SessionContext);
+    await loadSessionContext(session);
   };
 
   useEffect(() => {
@@ -83,29 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!mounted) return;
 
-      setSession(session);
+      await loadSessionContext(session);
 
-      if (session?.user) {
-        const { data, error } = await supabase.rpc('get_my_session_context');
-
-        if (!mounted) return;
-
-        if (error) {
-          console.error('Failed to load session context:', error);
-          setContext({
-            ...anonContext,
-            user_id: session.user.id,
-            email: session.user.email ?? null,
-            role: 'customer',
-          });
-        } else {
-          setContext(data as SessionContext);
-        }
-      } else {
-        setContext(anonContext);
+      if (mounted) {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
 
     init();
@@ -113,29 +164,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      setSession(newSession);
+      if (!mounted) return;
 
-      if (!newSession?.user) {
-        setContext(anonContext);
+      setLoading(true);
+      await loadSessionContext(newSession);
+
+      if (mounted) {
         setLoading(false);
-        return;
       }
-
-      const { data, error } = await supabase.rpc('get_my_session_context');
-
-      if (error) {
-        console.error('Failed to reload session context:', error);
-        setContext({
-          ...anonContext,
-          user_id: newSession.user.id,
-          email: newSession.user.email ?? null,
-          role: 'customer',
-        });
-      } else {
-        setContext(data as SessionContext);
-      }
-
-      setLoading(false);
     });
 
     return () => {

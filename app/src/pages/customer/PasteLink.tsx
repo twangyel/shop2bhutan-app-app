@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
+  Camera,
   ExternalLink,
   ImageIcon,
   Info,
@@ -48,6 +49,7 @@ type PasteLinkDraftItem = PasteLinkOrderItemInput & {
   productImage?: string;
   price: number;
   quantity: number;
+  screenshotPreviewUrl?: string;
 };
 
 type PreviewState = {
@@ -116,6 +118,10 @@ export default function PasteLink() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [preview, setPreview] = useState<PreviewState>(emptyPreview);
+
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [screenshotPreview, setScreenshotPreview] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const profile = (context?.profile ?? null) as ProfileLike | null;
 
@@ -196,54 +202,92 @@ export default function PasteLink() {
     };
   }, [canTryPreview, cleanUrl]);
 
-  const addItemFromPreview = async () => {
-    setSubmitError('');
+  const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    if (!cleanUrl) {
-      setSubmitError('Please paste a valid product URL.');
+    if (!file.type.startsWith('image/')) {
+      setSubmitError('Please select an image file (JPG, PNG, etc.)');
       return;
     }
 
-    let productPreview = isPreviewForUrl(preview, cleanUrl) ? preview.data : null;
+    setSubmitError('');
+    setScreenshotFile(file);
 
-    if (!productPreview) {
-      setPreview({ url: cleanUrl, loading: true, data: null, error: '' });
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setScreenshotPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
-      try {
-        productPreview = await fetchProductLinkPreview(cleanUrl);
-      } catch (error) {
-        productPreview = makeLocalFallbackPreview(
-          cleanUrl,
-          error instanceof Error ? error.message : 'Unable to fetch product details.'
-        );
-      }
+  const clearScreenshot = () => {
+    setScreenshotFile(null);
+    setScreenshotPreview('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
-      setPreview({
-        url: cleanUrl,
-        loading: false,
-        data: productPreview,
-        error: productPreview.fetched ? '' : productPreview.message || '',
-      });
+  const addItemFromPreview = async () => {
+    setSubmitError('');
+
+    const hasUrl = Boolean(cleanUrl);
+    const hasScreenshot = Boolean(screenshotFile);
+
+    if (!hasUrl && !hasScreenshot) {
+      setSubmitError('Please paste a product link or upload a product screenshot.');
+      return;
     }
 
-    const platform = productPreview?.platform || detectSourcePlatformFromUrl(cleanUrl);
+    let productPreview: ProductLinkPreview | null = null;
+
+    if (hasUrl) {
+      productPreview = isPreviewForUrl(preview, cleanUrl) ? preview.data : null;
+
+      if (!productPreview) {
+        setPreview({ url: cleanUrl, loading: true, data: null, error: '' });
+
+        try {
+          productPreview = await fetchProductLinkPreview(cleanUrl);
+        } catch (error) {
+          productPreview = makeLocalFallbackPreview(
+            cleanUrl,
+            error instanceof Error ? error.message : 'Unable to fetch product details.'
+          );
+        }
+
+        setPreview({
+          url: cleanUrl,
+          loading: false,
+          data: productPreview,
+          error: productPreview.fetched ? '' : productPreview.message || '',
+        });
+      }
+    }
+
+    const platform = productPreview?.platform || (hasUrl ? detectSourcePlatformFromUrl(cleanUrl) : 'other');
+    const productName = productPreview?.title || (hasUrl ? makeProductName(platform) : 'Screenshot product request');
 
     setItems((prev) => [
       ...prev,
       {
         id: `pli-${Date.now()}`,
-        sourceUrl: cleanUrl,
+        sourceUrl: hasUrl ? cleanUrl : '',
         sourcePlatform: platform,
-        productName: productPreview?.title || makeProductName(platform),
+        productName,
         productImage: productPreview?.image || '',
         price: productPreview?.price || 0,
         quantity: 1,
         notes: '',
+        screenshotFile: screenshotFile || undefined,
+        screenshotPreviewUrl: screenshotPreview || undefined,
       },
     ]);
 
     setUrl('');
     setPreview(emptyPreview);
+    clearScreenshot();
   };
 
   const removeItem = (id: string) => {
@@ -275,7 +319,7 @@ export default function PasteLink() {
     }
 
     if (items.length === 0) {
-      setSubmitError('Please add at least one product link.');
+      setSubmitError('Please add at least one product link or screenshot.');
       return;
     }
 
@@ -369,6 +413,46 @@ export default function PasteLink() {
             )}
           </div>
 
+          {/* Screenshot Upload */}
+          <div className="mt-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleScreenshotChange}
+              className="hidden"
+            />
+
+            {!screenshotFile ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full h-12 border-2 border-dashed border-neutral-300 rounded-xl flex items-center justify-center gap-2 text-sm text-neutral-500 hover:border-amber-400 hover:text-amber-600 transition-colors"
+              >
+                <Camera size={18} />
+                Upload product screenshot
+              </button>
+            ) : (
+              <div className="relative rounded-xl border border-neutral-200 bg-white overflow-hidden">
+                <img
+                  src={screenshotPreview}
+                  alt="Screenshot preview"
+                  className="w-full h-32 object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={clearScreenshot}
+                  className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center shadow-sm"
+                >
+                  <X size={14} className="text-neutral-600" />
+                </button>
+                <div className="px-3 py-2 bg-white">
+                  <p className="text-xs text-neutral-500 truncate">{screenshotFile.name}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {preview.loading && (
             <div className="mt-3 rounded-xl border border-amber-100 bg-white p-3 flex items-center gap-3">
               <div className="w-12 h-12 rounded-lg bg-amber-50 flex items-center justify-center">
@@ -447,7 +531,7 @@ export default function PasteLink() {
           <button
             type="button"
             onClick={addItemFromPreview}
-            disabled={!cleanUrl || preview.loading}
+            disabled={(!cleanUrl && !screenshotFile) || preview.loading}
             className="w-full h-12 bg-amber-500 text-white font-semibold rounded-xl mt-3 hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {preview.loading ? (
@@ -481,7 +565,14 @@ export default function PasteLink() {
             {items.map((item) => (
               <div key={item.id} className="bg-white rounded-2xl p-3 shadow-sm border border-neutral-100">
                 <div className="flex gap-3">
-                  {item.productImage ? (
+                  {item.screenshotPreviewUrl ? (
+                    <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-neutral-100 flex-shrink-0">
+                      <img src={item.screenshotPreviewUrl} alt="" className="w-full h-full object-cover" />
+                      <span className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-amber-500 text-white text-[9px] font-bold rounded">
+                        IMG
+                      </span>
+                    </div>
+                  ) : item.productImage ? (
                     <img
                       src={item.productImage}
                       alt=""
@@ -502,14 +593,15 @@ export default function PasteLink() {
                       placeholder="Product name"
                     />
 
-                    <a
-                      href={item.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block text-[11px] text-neutral-400 truncate mt-1"
-                    >
-                      {item.sourceUrl}
-                    </a>
+                    {item.sourceUrl ? (
+                      <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="block text-[11px] text-neutral-400 truncate mt-1">
+                        {item.sourceUrl}
+                      </a>
+                    ) : (
+                      <span className="inline-block mt-1 px-2 py-0.5 bg-amber-50 text-amber-600 text-[10px] font-medium rounded-full">
+                        Screenshot request
+                      </span>
+                    )}
 
                     <span className="inline-block mt-1 px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[10px] font-medium rounded-full uppercase">
                       {item.sourcePlatform}
