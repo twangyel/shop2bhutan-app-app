@@ -1,5 +1,3 @@
-
-
 import { Routes, Route } from 'react-router-dom';
 import { AppProvider } from '@/contexts/AppContext';
 
@@ -29,6 +27,7 @@ import Notifications from '@/pages/customer/Notifications';
 import Parcel from '@/pages/customer/Parcel';
 import ParcelBooking from '@/pages/customer/ParcelBooking';
 import MyParcels from '@/pages/customer/MyParcels';
+import Shop from '@/pages/customer/Shop';
 
 // Admin Pages
 import Dashboard from '@/pages/admin/Dashboard';
@@ -51,8 +50,6 @@ import AdminParcelRequests from '@/pages/admin/ParcelRequests';
 export default function App() {
   return (
     <>
-     
-
       <AppProvider>
         <Routes>
           {/* Auth Routes - No Layout */}
@@ -80,6 +77,7 @@ export default function App() {
             <Route path="/parcel" element={<Parcel />} />
             <Route path="/parcel-booking/:tripId" element={<ParcelBooking />} />
             <Route path="/my-parcels" element={<MyParcels />} />
+            <Route path="/shop" element={<Shop />} />
           </Route>
 
           {/* Admin Routes */}

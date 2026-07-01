@@ -16,7 +16,7 @@ type CustomerProfile = {
   full_name?: string | null;
   name?: string | null;
   phone?: string | null;
-  dzongkhag?: string | null;
+  default_dzongkhag_id?: string | null;
   avatar_url?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -69,7 +69,6 @@ function buildProfileInsert(user: User) {
     'Customer';
 
   const phone = cleanString(metadata.phone);
-  const dzongkhag = cleanString(metadata.dzongkhag);
   const avatarUrl = cleanString(metadata.avatar_url) ?? cleanString(metadata.picture);
 
   const payload: Record<string, string> = {
@@ -78,7 +77,6 @@ function buildProfileInsert(user: User) {
   };
 
   if (phone) payload.phone = phone;
-  if (dzongkhag) payload.dzongkhag = dzongkhag;
   if (avatarUrl) payload.avatar_url = avatarUrl;
 
   return payload;

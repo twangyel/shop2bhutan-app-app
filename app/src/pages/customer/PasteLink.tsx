@@ -318,9 +318,9 @@ export default function PasteLink() {
   return (
     <div className="min-h-screen bg-neutral-50 pb-56">
       <div className="bg-white px-5 pt-6 pb-5 border-b border-neutral-100">
-        <h1 className="text-2xl font-bold text-gray-900">Request a Quotation</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Request Product</h1>
         <p className="text-sm text-neutral-500 mt-1">
-          Paste a product link and we will check the final cost for Bhutan.
+          Paste a product link or upload a product screenshot. We will verify details and send you a quotation.
         </p>
 
         <div className="flex gap-3 mt-5 justify-center">
@@ -352,7 +352,7 @@ export default function PasteLink() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') addItemFromPreview();
               }}
-              placeholder="Paste Amazon, Flipkart, Myntra or Meesho URL"
+              placeholder="Paste product URL from Amazon, Flipkart, Myntra, Meesho..."
               className="w-full h-12 pl-10 pr-10 bg-white border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
             />
             {url && (
@@ -400,15 +400,15 @@ export default function PasteLink() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <Sparkles size={13} className="text-amber-500" />
                     <span className="text-[11px] font-semibold text-amber-600">
-                      {preview.data.fetched ? 'Product preview found' : 'Manual verification'}
+                      {preview.data.fetched ? 'Product preview found' : 'Product details not detected'}
                     </span>
                   </div>
                   <p className="text-sm font-semibold text-gray-900 line-clamp-2">
-                    {preview.data.fetched ? preview.data.title : 'Product details not detected'}
+                    {preview.data.fetched ? preview.data.title : 'We could not detect product details'}
                   </p>
                   {!preview.data.fetched && (
                     <p className="text-[11px] text-neutral-500 mt-0.5">
-                      No problem — Shop2Bhutan will verify the product manually.
+                      No worries — Shop2Bhutan will verify this manually.
                     </p>
                   )}
                   <a
@@ -469,8 +469,8 @@ export default function PasteLink() {
         <div className="px-4 mt-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h3 className="text-base font-semibold text-gray-900">Items to Quote</h3>
-              <p className="text-xs text-neutral-500">Review or edit details before submitting.</p>
+              <h3 className="text-base font-semibold text-gray-900">Your Request Items</h3>
+              <p className="text-xs text-neutral-500">Review or edit details before submitting your quote request.</p>
             </div>
             <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full">
               {items.length}
@@ -640,16 +640,16 @@ export default function PasteLink() {
           className="flex items-center gap-2 text-sm text-neutral-600"
         >
           <Info size={16} />
-          <span className="font-medium">How it works</span>
+          <span className="font-medium">How does this work?</span>
         </button>
 
         {showHowItWorks && (
           <div className="mt-3 bg-white rounded-xl p-4 space-y-3">
             {[
-              'Paste the product link and add the item to your request',
-              'We check availability, shipping, service fee, and delivery charges',
-              'You receive a quotation with the final payable amount',
-              'Approve the quotation, upload payment proof, and track your order',
+              'Paste a product link or upload a screenshot',
+              'We verify availability, price, service fee, and delivery cost',
+              'You receive a quotation with the final amount',
+              'Approve the quotation, make payment, and we handle the rest',
             ].map((step, i) => (
               <div key={i} className="flex items-start gap-3">
                 <span className="w-6 h-6 bg-amber-500 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
@@ -683,7 +683,7 @@ export default function PasteLink() {
               </>
             ) : (
               <>
-                Request Quotation
+                Submit Quote Request
                 <ArrowRight size={18} />
               </>
             )}

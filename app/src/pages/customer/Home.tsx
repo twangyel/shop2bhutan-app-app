@@ -1,110 +1,214 @@
-import { useNavigate } from 'react-router-dom';
-import { Search, Bell, MapPin, ChevronDown } from 'lucide-react';
-import { products } from '@/data/mockData';
-import { useApp } from '@/contexts/AppContext';
-import Logo from '@/components/shared/Logo';
+import { useNavigate } from 'react-router-dom'
+import {
+  Search, Bell, MapPin, ChevronDown,
+  Link2, ClipboardList, Truck, HelpCircle,
+  ArrowRight, FileText, CreditCard,
+  Shield, Wallet,
+} from 'lucide-react'
+import { useApp } from '@/contexts/AppContext'
+import Logo from '@/components/shared/Logo'
 
-import HeroBanner from '@/components/customer/HeroBanner';
-import PasteLinkCard from '@/components/customer/PasteLinkCard';
-import QuickActions from '@/components/customer/QuickActions';
-import CategoryScroll from '@/components/customer/CategoryScroll';
-import ProductSection from '@/components/customer/ProductSection';
-import TrustProcess from '@/components/customer/TrustProcess';
-import HowItWorks from '@/components/customer/HowItWorks';
-import TrustBadges from '@/components/customer/TrustBadges';
+const howItWorksSteps = [
+  { icon: Link2, text: 'Submit product link or screenshot' },
+  { icon: Search, text: 'We verify price and availability' },
+  { icon: FileText, text: 'Receive quotation' },
+  { icon: CreditCard, text: 'Confirm and pay' },
+  { icon: Truck, text: 'Track your order' },
+]
+
+const quickActions = [
+  { icon: Link2, label: 'Paste Link', path: '/paste-link' },
+  { icon: ClipboardList, label: 'My Orders', path: '/orders' },
+  { icon: Truck, label: 'Track Order', path: '/orders' },
+  { icon: HelpCircle, label: 'Support', path: '/support' },
+]
+
+const supportedStores = ['Amazon', 'Flipkart', 'Myntra', 'Meesho', 'Nykaa', 'AJIO']
 
 export default function Home() {
-  const navigate = useNavigate();
-  const { unreadCount, user } = useApp();
-
-  const curatedPicks = products
-    .filter((p) => p.badge === 'BESTSELLER' || p.rating >= 4.3)
-    .slice(0, 4);
-  const trendingRequests = products
-    .filter((p) => p.badge === 'SALE' || p.badge === 'HOT')
-    .slice(0, 6);
-  const newArrivals = products.filter((p) => p.badge === 'NEW').slice(0, 6);
+  const navigate = useNavigate()
+  const { unreadCount, user } = useApp()
 
   return (
     <div className="min-h-screen bg-neutral-50">
-      {/* Sticky Header */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-neutral-100">
-        <div className="px-4 pt-3 pb-2">
-          <div className="flex items-center justify-between">
-            <Logo size="sm" />
-            <button
-              onClick={() => navigate('/notifications')}
-              className="relative p-2 -mr-2 rounded-full hover:bg-neutral-100 transition-colors"
-            >
-              <Bell size={20} className="text-neutral-600" />
-              {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white" />
-              )}
-            </button>
-          </div>
-
+      {/* A. Sticky Header */}
+      <div className="sticky top-0 z-40 bg-white border-b border-neutral-100">
+        <div className="flex items-center justify-between px-4 py-3">
+          <Logo size="sm" />
           <button
-            onClick={() => navigate('/catalog')}
-            className="w-full h-10 mt-2.5 bg-neutral-100 rounded-full flex items-center px-4 gap-2.5 hover:bg-neutral-200/70 transition-colors"
+            type="button"
+            onClick={() => navigate('/notifications')}
+            className="relative p-2"
+            aria-label="Notifications"
           >
-            <Search size={16} className="text-neutral-400" />
-            <span className="text-sm text-neutral-400 flex-1 text-left">
-              Search products or paste a link...
-            </span>
-          </button>
-
-          <button className="flex items-center gap-1 mt-2 pb-0.5">
-            <MapPin size={13} className="text-amber-500" />
-            <span className="text-[11px] text-neutral-500 font-medium">Deliver to:</span>
-            <span className="text-[11px] text-amber-600 font-bold">
-              {user?.dzongkhag || 'Thimphu'}
-            </span>
-            <ChevronDown size={12} className="text-neutral-400" />
+            <Bell size={22} className="text-neutral-700" />
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full" />
+            )}
           </button>
         </div>
-      </header>
+        <button
+          type="button"
+          onClick={() => navigate('/account')}
+          className="flex items-center gap-1 px-4 pb-2"
+        >
+          <MapPin size={14} className="text-amber-500" />
+          <span className="text-xs text-neutral-500">
+            Hub: {user?.dzongkhag || 'Thimphu'}
+          </span>
+          <ChevronDown size={12} className="text-neutral-400" />
+        </button>
+      </div>
 
-      {/* Main Content */}
-      <main className="px-4 pb-6 space-y-5">
-        <HeroBanner />
-        <PasteLinkCard />
-        <QuickActions />
-        <CategoryScroll />
+      <div className="px-4 pt-4 pb-6 space-y-5">
+        {/* B. Search Bar */}
+        <button
+          type="button"
+          onClick={() => navigate('/paste-link')}
+          className="w-full flex items-center gap-3 bg-neutral-100 rounded-full h-10 px-4 text-left"
+        >
+          <Search size={18} className="text-neutral-400" />
+          <span className="text-sm text-neutral-400">
+            Search products or paste a link...
+          </span>
+        </button>
 
-        <ProductSection
-          title="Curated Picks"
-          subtitle="Handpicked products from India"
-          products={curatedPicks}
-          layout="grid"
-          maxItems={4}
-        />
+        {/* C. Hero Banner Card */}
+        <div className="bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-2xl p-5 text-white shadow-lg">
+          <div className="flex flex-wrap gap-2 mb-4">
+            {['Amazon.in', 'Flipkart', 'Myntra', 'Meesho'].map((store) => (
+              <span
+                key={store}
+                className="px-2.5 py-1 bg-white/20 backdrop-blur-sm rounded-full text-[11px] font-medium"
+              >
+                {store}
+              </span>
+            ))}
+          </div>
+          <h2 className="text-2xl font-bold leading-tight">
+            Shop from India, receive in Bhutan
+          </h2>
+          <p className="text-sm text-amber-100 mt-2 leading-relaxed">
+            Any product. Any site. We handle shipping to your nearest hub.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate('/paste-link')}
+            className="mt-4 px-5 py-2.5 bg-white text-amber-600 font-semibold rounded-xl text-sm hover:bg-amber-50 transition-colors"
+          >
+            Request Product
+          </button>
+        </div>
 
-        <TrustProcess />
+        {/* D. Request Quotation Card */}
+        <div className="bg-white rounded-2xl border border-neutral-200 p-4 space-y-3">
+          <div>
+            <h3 className="font-bold text-gray-900">Request quotation by link</h3>
+            <p className="text-xs text-neutral-500 mt-1">
+              Paste a product URL and we will auto-fetch details when possible.
+            </p>
+          </div>
+          <input
+            type="url"
+            placeholder="https://..."
+            readOnly
+            onClick={() => navigate('/paste-link')}
+            className="w-full h-11 px-4 border border-neutral-200 rounded-xl text-sm focus:outline-none cursor-pointer"
+          />
+          <button
+            type="button"
+            onClick={() => navigate('/paste-link')}
+            className="w-full h-11 bg-amber-500 text-white font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-amber-600 transition-colors"
+          >
+            Request Quotation
+            <ArrowRight size={16} />
+          </button>
+          <p className="text-[11px] text-neutral-400">
+            Auto-fetch title, image, and price when the website allows it.
+          </p>
+        </div>
 
-        <ProductSection
-          title="Trending Requests"
-          subtitle="Most requested by Bhutan shoppers"
-          badge="HOT"
-          badgeColor="bg-orange-50 text-orange-600"
-          products={trendingRequests}
-          layout="horizontal"
-          maxItems={6}
-        />
+        {/* E. Quick Actions Grid */}
+        <div className="grid grid-cols-4 gap-3">
+          {quickActions.map((action) => {
+            const Icon = action.icon
+            return (
+              <button
+                key={action.label}
+                type="button"
+                onClick={() => navigate(action.path)}
+                className="flex flex-col items-center gap-2 bg-white rounded-xl border border-neutral-200 p-3 hover:bg-neutral-50 transition-colors"
+              >
+                <Icon size={22} className="text-amber-500" />
+                <span className="text-[11px] font-medium text-neutral-700">{action.label}</span>
+              </button>
+            )
+          })}
+        </div>
 
-        <ProductSection
-          title="New Arrivals"
-          subtitle="Fresh additions to our catalog"
-          badge="NEW"
-          badgeColor="bg-emerald-50 text-emerald-600"
-          products={newArrivals}
-          layout="horizontal"
-          maxItems={6}
-        />
+        {/* F. How It Works Section */}
+        <div className="bg-white rounded-2xl border border-neutral-200 p-4">
+          <h3 className="font-bold text-gray-900 mb-4">How it works</h3>
+          <div className="space-y-3">
+            {howItWorksSteps.map((step, i) => {
+              const Icon = step.icon
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-7 h-7 bg-amber-500 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
+                    {i + 1}
+                  </div>
+                  <Icon size={18} className="text-neutral-400 flex-shrink-0" />
+                  <p className="text-sm text-neutral-600">{step.text}</p>
+                </div>
+              )
+            })}
+          </div>
+        </div>
 
-        <HowItWorks />
-        <TrustBadges />
+        {/* G. Supported Stores Section */}
+        <div>
+          <h3 className="font-bold text-gray-900 mb-3">
+            Send us links from these stores
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {supportedStores.map((store) => (
+              <span
+                key={store}
+                className="px-3 py-1.5 bg-white border border-neutral-200 rounded-full text-xs font-medium text-neutral-600"
+              >
+                {store}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* H. Trust Section */}
+        <div className="bg-white rounded-2xl border border-neutral-200 p-4">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="flex flex-col items-center gap-2">
+              <Shield size={22} className="text-amber-500" />
+              <span className="text-[11px] font-medium text-neutral-600 leading-tight">
+                Secure ordering
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <Wallet size={22} className="text-amber-500" />
+              <span className="text-[11px] font-medium text-neutral-600 leading-tight">
+                Cash & online payments accepted
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <MapPin size={22} className="text-amber-500" />
+              <span className="text-[11px] font-medium text-neutral-600 leading-tight">
+                Orders accepted across Bhutan
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* I. Spacer */}
         <div className="h-2" />
-      </main>
+      </div>
     </div>
-  );
+  )
 }

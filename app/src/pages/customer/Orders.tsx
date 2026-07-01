@@ -131,7 +131,7 @@ export default function Orders() {
             icon={<Package size={40} className="text-neutral-300" />}
             title={`No ${activeTab === 'all' ? '' : activeTab.replace('_', ' ')} orders`}
             description="Orders will appear here once you place them."
-            action={{ label: 'Start Shopping', onClick: () => navigate('/catalog') }}
+            action={{ label: 'Request a Product', onClick: () => navigate('/paste-link') }}
           />
         )}
       </div>
