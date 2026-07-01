@@ -738,7 +738,7 @@ function fallbackProductPreview(url: string, message?: string): ProductLinkPrevi
     platform,
     title: productNameFromPlatform(platform),
     fetched: false,
-    message: message || 'Product details could not be fetched automatically. You can still edit the item and submit it.',
+    message: message || 'We could not auto-detect product details. You can still continue — Shop2Bhutan will verify the item before quotation.',
   };
 }
 
@@ -854,7 +854,7 @@ export async function fetchProductLinkPreview(url: string): Promise<ProductLinkP
       window.setTimeout(() => {
         resolve({
           data: null,
-          error: new Error('Auto-fetch timed out. You can still add the link manually.'),
+          error: new Error('Auto-fetch timed out. You can still continue — Shop2Bhutan will verify the item before quotation.'),
         });
       }, 8000);
     });
@@ -865,7 +865,7 @@ export async function fetchProductLinkPreview(url: string): Promise<ProductLinkP
       console.warn('[customerOrders] product preview fallback:', error);
       return fallbackProductPreview(
         normalizedUrl,
-        error.message || 'Auto-fetch is not available right now. You can still edit the item manually.'
+        error.message || 'Auto-fetch is not available right now. You can still continue — Shop2Bhutan will verify the item before quotation.'
       );
     }
 
@@ -878,7 +878,7 @@ export async function fetchProductLinkPreview(url: string): Promise<ProductLinkP
         preview.message ||
         (preview.fetched
           ? ''
-          : 'Only basic link details were found. Our team will verify the product manually.'),
+          : 'Product details were not detected. Shop2Bhutan will verify the product manually before quotation.'),
     };
   } catch (error) {
     console.warn('[customerOrders] product preview failed:', error);

@@ -96,7 +96,7 @@ function makeLocalFallbackPreview(cleanUrl: string, message?: string): ProductLi
     fetched: false,
     message:
       message ||
-      'We could not auto-fetch full details. No problem — our team will verify this link manually.',
+      'We could not auto-detect product details. You can still continue — Shop2Bhutan will verify the item before quotation.',
   };
 }
 
@@ -400,12 +400,17 @@ export default function PasteLink() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <Sparkles size={13} className="text-amber-500" />
                     <span className="text-[11px] font-semibold text-amber-600">
-                      {preview.data.fetched ? 'Auto fetched' : 'Editable fallback'}
+                      {preview.data.fetched ? 'Product preview found' : 'Manual verification'}
                     </span>
                   </div>
                   <p className="text-sm font-semibold text-gray-900 line-clamp-2">
-                    {preview.data.title}
+                    {preview.data.fetched ? preview.data.title : 'Product details not detected'}
                   </p>
+                  {!preview.data.fetched && (
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      No problem — Shop2Bhutan will verify the product manually.
+                    </p>
+                  )}
                   <a
                     href={preview.data.url}
                     target="_blank"
@@ -418,9 +423,13 @@ export default function PasteLink() {
                     <span className="px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[10px] font-medium rounded-full uppercase">
                       {preview.data.platform}
                     </span>
-                    {preview.data.price && (
+                    {preview.data.price ? (
                       <span className="text-xs font-bold text-amber-600">
                         {formatPrice(preview.data.price, preview.data.currency)}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-medium text-neutral-500">
+                        Price will be verified
                       </span>
                     )}
                   </div>
@@ -448,7 +457,7 @@ export default function PasteLink() {
               </>
             ) : (
               <>
-                Add Item
+                Add to Quote Request
                 <Plus size={18} />
               </>
             )}
