@@ -742,15 +742,89 @@ function fallbackProductPreview(url: string, message?: string): ProductLinkPrevi
   };
 }
 
+function pickPreviewObject(raw: AnyRow): AnyRow {
+  // Accept all common Edge Function response contracts:
+  // {title,image,price}, {preview:{...}}, {product:{...}}, {data:{...}}, or {ok:true, product:{...}}.
+  const candidates = [raw.preview, raw.product, raw.item, raw.data, raw.result, raw];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      return candidate as AnyRow;
+    }
+  }
+
+  return raw;
+}
+
+function parsePreviewPrice(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  }
+
+  const clean = String(value ?? '')
+    .replace(/,/g, '')
+    .replace(/[^0-9.]/g, '');
+
+  const numeric = Number(clean);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
 function normalizePreviewPayload(payload: unknown, requestedUrl: string): ProductLinkPreview {
   const raw = (payload ?? {}) as AnyRow;
-  const preview = (raw.preview ?? raw) as AnyRow;
-  const normalizedUrl = normalizeProductUrl(String(preview.url ?? requestedUrl)) || requestedUrl;
-  const platform = cleanText(preview.platform) || detectSourcePlatformFromUrl(normalizedUrl);
-  const title = cleanText(preview.title) || productNameFromPlatform(platform);
-  const image = cleanText(preview.image || preview.imageUrl || preview.productImage);
-  const priceValue = Number(preview.price ?? preview.amount ?? 0);
-  const price = Number.isFinite(priceValue) && priceValue > 0 ? priceValue : undefined;
+  const preview = pickPreviewObject(raw);
+
+  const rawUrl =
+    preview.url ||
+    preview.sourceUrl ||
+    preview.productUrl ||
+    preview.link ||
+    raw.url ||
+    requestedUrl;
+
+  const normalizedUrl = normalizeProductUrl(String(rawUrl ?? requestedUrl)) || requestedUrl;
+  const platform =
+    cleanText(preview.platform || preview.sourcePlatform || raw.platform) ||
+    detectSourcePlatformFromUrl(normalizedUrl);
+
+  const title =
+    cleanText(
+      preview.title ||
+        preview.name ||
+        preview.productName ||
+        preview.product_title ||
+        preview.item_name ||
+        raw.title ||
+        raw.name
+    ) || productNameFromPlatform(platform);
+
+  const image = cleanText(
+    preview.image ||
+      preview.imageUrl ||
+      preview.image_url ||
+      preview.productImage ||
+      preview.thumbnail ||
+      preview.thumbnailUrl ||
+      raw.image ||
+      raw.imageUrl
+  );
+
+  const price = parsePreviewPrice(
+    preview.price ||
+      preview.amount ||
+      preview.currentPrice ||
+      preview.current_price ||
+      preview.salePrice ||
+      preview.sale_price ||
+      preview.mrp ||
+      raw.price ||
+      raw.amount
+  );
+
+  const fetchedFlag = preview.fetched ?? raw.fetched ?? raw.ok ?? raw.success;
+  const fetched =
+    typeof fetchedFlag === 'boolean'
+      ? fetchedFlag
+      : Boolean(title && title !== productNameFromPlatform(platform)) || Boolean(image) || Boolean(price);
 
   return {
     url: normalizedUrl,
@@ -758,9 +832,9 @@ function normalizePreviewPayload(payload: unknown, requestedUrl: string): Produc
     title,
     image: image || undefined,
     price,
-    currency: cleanText(preview.currency) || undefined,
-    fetched: Boolean(preview.fetched ?? raw.ok ?? title),
-    message: cleanText(preview.message || raw.message),
+    currency: cleanText(preview.currency || preview.priceCurrency || raw.currency) || undefined,
+    fetched,
+    message: cleanText(preview.message || raw.message || raw.error),
   };
 }
 
@@ -772,25 +846,40 @@ export async function fetchProductLinkPreview(url: string): Promise<ProductLinkP
   }
 
   try {
-    const { data, error } = await supabase.functions.invoke('product-link-preview', {
+    const invokePromise = supabase.functions.invoke('product-link-preview', {
       body: { url: normalizedUrl },
     });
+
+    const timeoutPromise = new Promise<{ data: null; error: Error }>((resolve) => {
+      window.setTimeout(() => {
+        resolve({
+          data: null,
+          error: new Error('Auto-fetch timed out. You can still add the link manually.'),
+        });
+      }, 8000);
+    });
+
+    const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
 
     if (error) {
       console.warn('[customerOrders] product preview fallback:', error);
       return fallbackProductPreview(
         normalizedUrl,
-        'Auto-fetch is not available yet. Deploy the product-link-preview Edge Function, or edit the item manually.'
+        error.message || 'Auto-fetch is not available right now. You can still edit the item manually.'
       );
     }
 
     const preview = normalizePreviewPayload(data, normalizedUrl);
 
-    if (!preview.title || preview.title === 'Pasted product link') {
-      return fallbackProductPreview(normalizedUrl);
-    }
-
-    return preview;
+    return {
+      ...preview,
+      title: preview.title || productNameFromPlatform(preview.platform),
+      message:
+        preview.message ||
+        (preview.fetched
+          ? ''
+          : 'Only basic link details were found. Our team will verify the product manually.'),
+    };
   } catch (error) {
     console.warn('[customerOrders] product preview failed:', error);
     return fallbackProductPreview(normalizedUrl);

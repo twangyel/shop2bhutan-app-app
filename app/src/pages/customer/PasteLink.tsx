@@ -83,8 +83,25 @@ function formatPrice(value?: number, currency = 'INR') {
   return `${label} ${Math.round(value).toLocaleString()}`;
 }
 
+function makeLocalFallbackPreview(cleanUrl: string, message?: string): ProductLinkPreview {
+  const platform = detectSourcePlatformFromUrl(cleanUrl);
+
+  return {
+    url: cleanUrl,
+    platform,
+    title: makeProductName(platform),
+    image: '',
+    price: 0,
+    currency: 'INR',
+    fetched: false,
+    message:
+      message ||
+      'We could not auto-fetch full details. No problem — our team will verify this link manually.',
+  };
+}
+
 function isPreviewForUrl(preview: PreviewState, cleanUrl: string) {
-  return preview.data && preview.url === cleanUrl && normalizeProductUrl(preview.data.url) === cleanUrl;
+  return Boolean(preview.data && preview.url === cleanUrl);
 }
 
 export default function PasteLink() {
@@ -153,16 +170,22 @@ export default function PasteLink() {
         setPreview({
           url: activeUrl,
           loading: false,
-          data,
-          error: data.fetched ? '' : data.message || '',
+          data: data || makeLocalFallbackPreview(activeUrl),
+          error: data?.fetched ? '' : data?.message || '',
         });
       } catch (error) {
         if (cancelled) return;
+
+        const fallback = makeLocalFallbackPreview(
+          activeUrl,
+          error instanceof Error ? error.message : 'Unable to fetch product details.'
+        );
+
         setPreview({
           url: activeUrl,
           loading: false,
-          data: null,
-          error: error instanceof Error ? error.message : 'Unable to fetch product details.',
+          data: fallback,
+          error: fallback.message || '',
         });
       }
     }, 700);
@@ -185,7 +208,16 @@ export default function PasteLink() {
 
     if (!productPreview) {
       setPreview({ url: cleanUrl, loading: true, data: null, error: '' });
-      productPreview = await fetchProductLinkPreview(cleanUrl);
+
+      try {
+        productPreview = await fetchProductLinkPreview(cleanUrl);
+      } catch (error) {
+        productPreview = makeLocalFallbackPreview(
+          cleanUrl,
+          error instanceof Error ? error.message : 'Unable to fetch product details.'
+        );
+      }
+
       setPreview({
         url: cleanUrl,
         loading: false,
@@ -374,6 +406,14 @@ export default function PasteLink() {
                   <p className="text-sm font-semibold text-gray-900 line-clamp-2">
                     {preview.data.title}
                   </p>
+                  <a
+                    href={preview.data.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block text-[11px] text-neutral-400 truncate mt-0.5"
+                  >
+                    {preview.data.url}
+                  </a>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[10px] font-medium rounded-full uppercase">
                       {preview.data.platform}
