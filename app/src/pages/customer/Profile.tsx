@@ -26,6 +26,17 @@ type ProfileLike = {
   avatar_url?: string | null;
 };
 
+const PHONE_ONLY_EMAIL_SUFFIX = '@phone.shop2bhutan.local';
+
+function getDisplayEmail(value?: string | null) {
+  const email = value?.trim() || '';
+
+  if (!email) return 'No email added';
+  if (email.toLowerCase().endsWith(PHONE_ONLY_EMAIL_SUFFIX)) return 'No email added';
+
+  return email;
+}
+
 function normalizeBhutanPhone(input: string): string | null {
   const digits = input.replace(/\D/g, '');
 
@@ -63,7 +74,7 @@ export default function Profile() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const displayEmail = context?.email || user?.email || '';
+  const displayEmail = getDisplayEmail(context?.email || user?.email);
 
   const initials = useMemo(() => {
     const source = fullName || displayEmail || 'Customer';
@@ -335,14 +346,14 @@ export default function Profile() {
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
               />
               <input
-                type="email"
+                type="text"
                 value={displayEmail}
                 disabled
                 className="w-full h-12 pl-10 pr-4 border border-neutral-200 rounded-xl text-sm bg-neutral-50 text-neutral-500"
               />
             </div>
             <p className="text-[11px] text-neutral-400 mt-1">
-              Email is managed by Supabase Auth.
+              Email is optional. Real email accounts can use forgot password.
             </p>
           </div>
 

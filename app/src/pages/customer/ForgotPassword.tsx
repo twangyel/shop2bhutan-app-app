@@ -90,7 +90,7 @@ export default function ForgotPassword() {
         </h1>
 
         <p className="text-sm text-neutral-500 mb-6">
-          Enter your email and we&apos;ll send you a reset link.
+          Enter your email and we&apos;ll send you a reset link. Phone-only accounts need support-assisted reset.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">

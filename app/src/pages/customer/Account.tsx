@@ -43,6 +43,17 @@ type ProfileLike = {
   avatar_url?: string | null;
 };
 
+const PHONE_ONLY_EMAIL_SUFFIX = '@phone.shop2bhutan.local';
+
+function getDisplayEmail(value?: string | null) {
+  const email = value?.trim() || '';
+
+  if (!email) return 'No email added';
+  if (email.toLowerCase().endsWith(PHONE_ONLY_EMAIL_SUFFIX)) return 'No email added';
+
+  return email;
+}
+
 export default function Account() {
   const navigate = useNavigate();
   const { unreadCount, orders } = useApp();
@@ -57,10 +68,9 @@ export default function Account() {
     user?.email?.split('@')[0] ||
     'Guest';
 
-  const displayEmail =
-    context?.email ||
-    user?.email ||
-    'Sign in to manage your orders';
+  const displayEmail = isLoggedIn
+    ? getDisplayEmail(context?.email || user?.email)
+    : 'Sign in to manage your orders';
 
   const displayPhone = profile?.phone?.trim() || null;
   const displayDzongkhag =

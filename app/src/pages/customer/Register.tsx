@@ -23,6 +23,16 @@ type ToastState = {
   message: string;
 };
 
+const PHONE_ONLY_EMAIL_DOMAIN = 'phone.shop2bhutan.local';
+
+function makePhoneOnlyAuthEmail(phone8: string) {
+  return `${phone8}@${PHONE_ONLY_EMAIL_DOMAIN}`;
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function normalizeBhutanPhone(input: string): string | null {
   const digits = input.replace(/\D/g, '');
   const phone8 = digits.startsWith('975') ? digits.slice(3) : digits;
@@ -138,7 +148,7 @@ export default function Register() {
     setSuccessMessage('');
   };
 
-  const checkDuplicateRegistration = async (email: string, phone: string) => {
+  const checkDuplicateRegistration = async (email: string | null, phone: string) => {
     const { data, error } = await supabase.rpc('check_registration_duplicate', {
       p_email: email,
       p_phone: phone,
@@ -167,9 +177,9 @@ export default function Register() {
       newErrors.name = 'Name is required';
     }
 
-    if (!form.email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+    const optionalEmail = form.email.trim().toLowerCase();
+
+    if (optionalEmail && !isValidEmail(optionalEmail)) {
       newErrors.email = 'Invalid email';
     }
 
@@ -215,10 +225,12 @@ export default function Register() {
     setSuccessMessage('');
 
     const cleanEmail = form.email.trim().toLowerCase();
+    const hasRealEmail = cleanEmail.length > 0;
+    const authEmail = hasRealEmail ? cleanEmail : makePhoneOnlyAuthEmail(normalizedPhone);
     const cleanName = form.name.trim();
 
     const { emailExists, phoneExists } = await checkDuplicateRegistration(
-      cleanEmail,
+      hasRealEmail ? cleanEmail : null,
       normalizedPhone
     );
 
@@ -246,7 +258,7 @@ export default function Register() {
     }
 
     const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
+      email: authEmail,
       password: form.password,
       options: {
         data: {
@@ -254,6 +266,7 @@ export default function Register() {
           name: cleanName,
           phone: normalizedPhone,
           default_dzongkhag_id: form.dzongkhag,
+          has_real_email: hasRealEmail,
         },
       },
     });
@@ -267,7 +280,9 @@ export default function Register() {
         type: 'error',
         title: isDuplicateError(message) ? 'Account already exists' : 'Registration failed',
         message: isDuplicateError(message)
-          ? 'This email or phone number is already registered. Please sign in instead.'
+          ? hasRealEmail
+            ? 'This email or phone number is already registered. Please sign in instead.'
+            : 'This phone number is already registered. Please sign in with phone number instead.'
           : message,
       });
 
@@ -319,13 +334,14 @@ export default function Register() {
       return;
     }
 
-    const successText =
-      'Account created. Please check your email to confirm your account, then sign in.';
+    const successText = hasRealEmail
+      ? 'Account created. Please check your email to confirm your account, then sign in.'
+      : 'Account created. Please sign in with your phone number and password.';
 
     setSuccessMessage(successText);
     showToast({
       type: 'success',
-      title: 'Check your email',
+      title: hasRealEmail ? 'Check your email' : 'Account created',
       message: successText,
     });
   };
@@ -399,7 +415,7 @@ export default function Register() {
 
           <div>
             <label className="block text-xs font-medium text-neutral-700 uppercase tracking-wider mb-1.5">
-              Email Address
+              Email Address (Optional)
             </label>
             <div className="relative">
               <Mail
@@ -410,13 +426,19 @@ export default function Register() {
                 type="email"
                 value={form.email}
                 onChange={(e) => update('email', e.target.value)}
-                placeholder="your@email.com"
+                placeholder="your@email.com (optional)"
                 className={`w-full h-12 pl-10 pr-4 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
                   errors.email ? 'border-red-400' : 'border-neutral-300'
                 }`}
               />
             </div>
-            {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
+            {errors.email ? (
+              <p className="text-xs text-red-500 mt-1">{errors.email}</p>
+            ) : (
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Optional, but recommended for password recovery and order updates.
+              </p>
+            )}
           </div>
 
           <div>
