@@ -128,6 +128,8 @@ export default function OrderDetail() {
     );
   }
 
+  const quotationReady = Boolean(order.quotation && order.status === 'quoted');
+
   return (
     <div className="min-h-screen bg-neutral-50">
       <div className="bg-white border-b border-neutral-200 px-4 py-3">
@@ -150,6 +152,32 @@ export default function OrderDetail() {
           <StatusBadge status={order.status} />
           <p className="text-sm text-neutral-500 mt-2">{statusMessage(order)}</p>
         </div>
+
+        {quotationReady && order.quotation && (
+          <button
+            type="button"
+            onClick={() => navigate(`/quotation/${order.id}`)}
+            className="w-full rounded-2xl border border-violet-200 bg-violet-50 p-4 text-left shadow-sm"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-full bg-violet-100 flex items-center justify-center flex-shrink-0">
+                  <FileText size={21} className="text-violet-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-violet-900">Quotation Ready</p>
+                  <p className="text-xs text-violet-700 mt-0.5">
+                    Review your quotation and proceed to payment.
+                  </p>
+                  <p className="text-sm font-bold text-violet-900 mt-1">
+                    Total: Nu. {order.quotation.totalAmount.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={20} className="text-violet-500 flex-shrink-0" />
+            </div>
+          </button>
+        )}
 
         <div className="bg-white rounded-xl p-4">
           <h3 className="text-base font-semibold text-gray-900 mb-4">Order Timeline</h3>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, SlidersHorizontal, Package } from 'lucide-react';
+import { ChevronRight, FileText, RefreshCw, SlidersHorizontal, Package } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import OrderCard from '@/components/shared/OrderCard';
 import EmptyState from '@/components/shared/EmptyState';
@@ -51,6 +51,8 @@ export default function Orders() {
       loadOrders();
     }
   }, [authLoading, loadOrders]);
+
+  const quotationReadyOrders = orders.filter((order) => order.status === 'quoted' && order.quotation);
 
   const filteredOrders = orders.filter((order) => {
     if (activeTab === 'all') return true;
@@ -112,6 +114,35 @@ export default function Orders() {
       </div>
 
       <div className="px-4 py-4 space-y-3">
+        {quotationReadyOrders.length > 0 && activeTab === 'all' && (
+          <button
+            type="button"
+            onClick={() => navigate(`/quotation/${quotationReadyOrders[0].id}`)}
+            className="w-full rounded-2xl border border-violet-200 bg-violet-50 p-4 text-left shadow-sm"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-full bg-violet-100 flex items-center justify-center flex-shrink-0">
+                  <FileText size={21} className="text-violet-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-violet-900">
+                    {quotationReadyOrders.length === 1 ? 'Quotation Ready' : `${quotationReadyOrders.length} Quotations Ready`}
+                  </p>
+                  <p className="text-xs text-violet-700 mt-0.5">
+                    Review and accept your quotation to proceed with payment.
+                  </p>
+                  <p className="text-xs font-semibold text-violet-900 mt-1">
+                    #{quotationReadyOrders[0].orderNumber}
+                    {quotationReadyOrders[0].quotation ? ` · Nu. ${quotationReadyOrders[0].quotation.totalAmount.toLocaleString()}` : ''}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={20} className="text-violet-500 flex-shrink-0" />
+            </div>
+          </button>
+        )}
+
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
             {error}

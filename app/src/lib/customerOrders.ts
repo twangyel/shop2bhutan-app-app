@@ -3,6 +3,7 @@ import type {
   Address,
   DeliveryFeeRule,
   DeliveryHub,
+  Notification as AppNotification,
   Order,
   OrderItem,
   OrderStatus,
@@ -692,6 +693,197 @@ export function normalizePaymentStatus(status: unknown): PaymentStatus {
   return map[raw] ?? 'pending'
 }
 
+
+function normalizeNotificationType(value: unknown): AppNotification['type'] {
+  const raw = String(value ?? '').toLowerCase()
+  if (raw === 'order_update' || raw === 'quotation' || raw === 'payment' || raw === 'promotion' || raw === 'system') {
+    return raw as AppNotification['type']
+  }
+  return 'system'
+}
+
+function makeNotification(row: AnyRow): AppNotification {
+  return {
+    id: firstString(row, ['id'], ''),
+    userId: firstString(row, ['user_id', 'customer_id', 'profile_id'], ''),
+    type: normalizeNotificationType(firstValue(row, ['type', 'notification_type'])),
+    title: firstString(row, ['title'], 'Notification'),
+    message: firstString(row, ['message', 'body', 'description'], ''),
+    link: firstString(row, ['link', 'url', 'action_url'], ''),
+    isRead: Boolean(firstValue(row, ['is_read', 'read', 'isRead']) ?? false),
+    createdAt: firstString(row, ['created_at'], new Date().toISOString()),
+  }
+}
+
+function emitNotificationUpdated() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('shop2bhutan:notifications-updated'))
+  }
+}
+
+export async function fetchCustomerNotifications(userId: string): Promise<AppNotification[]> {
+  if (!userId) return []
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(80)
+
+  if (error) {
+    if (isMissingColumnOrRelationError(error)) return []
+    throw error
+  }
+
+  return (data ?? []).map((row) => makeNotification(row as AnyRow))
+}
+
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
+  if (!userId) return 0
+
+  const { count, error } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('is_read', false)
+
+  if (!error) return count ?? 0
+  if (isMissingColumnOrRelationError(error)) return 0
+
+  const notifications = await fetchCustomerNotifications(userId)
+  return notifications.filter((item) => !item.isRead).length
+}
+
+export async function markCustomerNotificationRead(notificationId: string, userId: string) {
+  if (!notificationId || !userId) return
+
+  const now = new Date().toISOString()
+  const withReadAt = await supabase
+    .from('notifications')
+    .update({ is_read: true, read_at: now, updated_at: now })
+    .eq('id', notificationId)
+    .eq('user_id', userId)
+
+  if (!withReadAt.error) {
+    emitNotificationUpdated()
+    return
+  }
+
+  const withoutReadAt = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('id', notificationId)
+    .eq('user_id', userId)
+
+  if (withoutReadAt.error && !isMissingColumnOrRelationError(withoutReadAt.error)) throw withoutReadAt.error
+  emitNotificationUpdated()
+}
+
+export async function markAllCustomerNotificationsRead(userId: string) {
+  if (!userId) return
+
+  const now = new Date().toISOString()
+  const withReadAt = await supabase
+    .from('notifications')
+    .update({ is_read: true, read_at: now, updated_at: now })
+    .eq('user_id', userId)
+    .eq('is_read', false)
+
+  if (!withReadAt.error) {
+    emitNotificationUpdated()
+    return
+  }
+
+  const withoutReadAt = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', userId)
+    .eq('is_read', false)
+
+  if (withoutReadAt.error && !isMissingColumnOrRelationError(withoutReadAt.error)) throw withoutReadAt.error
+  emitNotificationUpdated()
+}
+
+async function createCustomerNotification(input: {
+  userId: string
+  type: AppNotification['type']
+  title: string
+  message: string
+  link?: string
+  dedupeKey?: string
+}) {
+  const userId = cleanText(input.userId)
+  if (!userId) return
+
+  const now = new Date().toISOString()
+  const basePayload = {
+    user_id: userId,
+    type: input.type,
+    title: cleanText(input.title),
+    message: cleanText(input.message),
+    link: cleanText(input.link) || null,
+    is_read: false,
+    created_at: now,
+    updated_at: now,
+  }
+  const dedupeKey = cleanText(input.dedupeKey)
+
+  if (dedupeKey) {
+    const upsert = await supabase
+      .from('notifications')
+      .upsert({ ...basePayload, dedupe_key: dedupeKey }, { onConflict: 'dedupe_key' })
+
+    if (!upsert.error) {
+      emitNotificationUpdated()
+      return
+    }
+
+    if (!isMissingColumnOrRelationError(upsert.error)) {
+      const duplicateMessage = errorMessage(upsert.error, '').toLowerCase()
+      if (duplicateMessage.includes('duplicate')) return
+      throw upsert.error
+    }
+  }
+
+  const insert = await supabase.from('notifications').insert(basePayload)
+  if (insert.error) {
+    const duplicateMessage = errorMessage(insert.error, '').toLowerCase()
+    if (duplicateMessage.includes('duplicate')) return
+    if (isMissingColumnOrRelationError(insert.error)) {
+      console.warn('[customerOrders] notifications table missing or not upgraded:', insert.error.message)
+      return
+    }
+    throw insert.error
+  }
+
+  emitNotificationUpdated()
+}
+
+async function createQuotationReadyNotificationForOrder(orderId: string, quotationRow: AnyRow) {
+  try {
+    const orderRow = await querySingleAdminOrderRow(orderId)
+    if (!orderRow) return
+
+    const userId = firstString(orderRow, ORDER_OWNER_COLUMNS, '')
+    if (!userId) return
+
+    const orderNo = firstString(orderRow, ['order_no', 'order_number', 'public_id'], orderId.slice(0, 8).toUpperCase())
+    const quotationId = firstString(quotationRow, ['id'], '')
+
+    await createCustomerNotification({
+      userId,
+      type: 'quotation',
+      title: 'Quotation Ready',
+      message: `Your quotation for order #${orderNo} is ready for review.`,
+      link: `/quotation/${orderId}`,
+      dedupeKey: `quotation-ready:${quotationId || orderId}`,
+    })
+  } catch (error) {
+    console.warn('[customerOrders] quotation notification skipped:', error)
+  }
+}
+
 function findProfileForOrder(row: AnyRow, profiles: AnyRow[]) {
   const ownerId = firstString(row, ORDER_OWNER_COLUMNS, '')
   if (!ownerId) return undefined
@@ -1357,12 +1549,13 @@ function makeQuotationItemPayloadCandidates(quotationId: string, item: AdminQuot
   const totalPrice = quantity * unitPrice
   const notes = cleanText(item.notes) || null
   const image = cleanText(item.productImage) || null
+  const name = cleanText(item.productName) || 'Quoted item'
 
   return [
     {
       quotation_id: quotationId,
       order_item_id: item.orderItemId,
-      item_name: cleanText(item.productName) || 'Quoted item',
+      item_name: name,
       product_image: image,
       quantity,
       unit_price: unitPrice,
@@ -1372,8 +1565,7 @@ function makeQuotationItemPayloadCandidates(quotationId: string, item: AdminQuot
     {
       quotation_id: quotationId,
       order_item_id: item.orderItemId,
-      product_name: cleanText(item.productName) || 'Quoted item',
-      product_image: image,
+      item_name: name,
       quantity,
       unit_price: unitPrice,
       total_price: totalPrice,
@@ -1382,17 +1574,18 @@ function makeQuotationItemPayloadCandidates(quotationId: string, item: AdminQuot
     {
       quotation_id: quotationId,
       order_item_id: item.orderItemId,
-      item_name: cleanText(item.productName) || 'Quoted item',
-      product_image: image,
+      name,
+      image_url: image,
       quantity,
-      price: unitPrice,
-      line_total: totalPrice,
+      unit_price: unitPrice,
+      total_price: totalPrice,
       notes,
     },
     {
       quotation_id: quotationId,
       order_item_id: item.orderItemId,
-      product_name: cleanText(item.productName) || 'Quoted item',
+      product_name: name,
+      product_image: image,
       quantity,
       unit_price: unitPrice,
       total_price: totalPrice,
@@ -1446,6 +1639,7 @@ export async function createOrUpdateAdminQuotation(input: CreateAdminQuotationIn
 
   await replaceQuotationItems(quotationId, input.items)
   await markOrderQuoted(input.orderId)
+  await createQuotationReadyNotificationForOrder(input.orderId, quotationRow)
 
   const refreshed = await fetchAdminOrderById(input.orderId)
   if (refreshed?.quotation) return refreshed.quotation

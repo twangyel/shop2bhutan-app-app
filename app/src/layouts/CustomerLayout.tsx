@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Home, ShoppingBag, Package, ClipboardList, User } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getRequestBagItemCount } from '@/lib/customerOrders'
+import { getRequestBagItemCount, getUnreadNotificationCount } from '@/lib/customerOrders'
 
 const tabs = [
   { path: '/', label: 'Home', icon: Home },
@@ -17,6 +17,7 @@ export default function CustomerLayout() {
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
   const [bagCount, setBagCount] = useState(0)
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
 
   const refreshBagCount = useCallback(async () => {
     if (!user || authLoading) {
@@ -33,23 +34,43 @@ export default function CustomerLayout() {
     }
   }, [authLoading, user])
 
+
+  const refreshNotificationCount = useCallback(async () => {
+    if (!user || authLoading) {
+      setUnreadNotificationCount(0)
+      return
+    }
+
+    try {
+      const count = await getUnreadNotificationCount(user.id)
+      setUnreadNotificationCount(count)
+    } catch (error) {
+      console.warn('[CustomerLayout] Notification count skipped:', error)
+      setUnreadNotificationCount(0)
+    }
+  }, [authLoading, user])
+
   useEffect(() => {
     void refreshBagCount()
-  }, [refreshBagCount, location.pathname])
+    void refreshNotificationCount()
+  }, [refreshBagCount, refreshNotificationCount, location.pathname])
 
   useEffect(() => {
-    const handleBagUpdated = () => {
+    const handleAppBadgesUpdated = () => {
       void refreshBagCount()
+      void refreshNotificationCount()
     }
 
-    window.addEventListener('shop2bhutan:request-bag-updated', handleBagUpdated)
-    window.addEventListener('focus', handleBagUpdated)
+    window.addEventListener('shop2bhutan:request-bag-updated', handleAppBadgesUpdated)
+    window.addEventListener('shop2bhutan:notifications-updated', handleAppBadgesUpdated)
+    window.addEventListener('focus', handleAppBadgesUpdated)
 
     return () => {
-      window.removeEventListener('shop2bhutan:request-bag-updated', handleBagUpdated)
-      window.removeEventListener('focus', handleBagUpdated)
+      window.removeEventListener('shop2bhutan:request-bag-updated', handleAppBadgesUpdated)
+      window.removeEventListener('shop2bhutan:notifications-updated', handleAppBadgesUpdated)
+      window.removeEventListener('focus', handleAppBadgesUpdated)
     }
-  }, [refreshBagCount])
+  }, [refreshBagCount, refreshNotificationCount])
 
   const hideTabBarPaths = ['/login', '/register', '/forgot-password', '/checkout', '/change-password']
   const shouldHideTabBar =
@@ -73,7 +94,10 @@ export default function CustomerLayout() {
             {tabs.map((tab) => {
               const isActive = location.pathname === tab.path
               const Icon = tab.icon
-              const showBadge = tab.showBadge && bagCount > 0
+              const showBagBadge = tab.showBadge && bagCount > 0
+              const showNotificationBadge = tab.path === '/account' && unreadNotificationCount > 0
+              const badgeValue = showBagBadge ? bagCount : unreadNotificationCount
+              const showBadge = showBagBadge || showNotificationBadge
 
               return (
                 <button
@@ -89,7 +113,7 @@ export default function CustomerLayout() {
                     />
                     {showBadge && (
                       <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
-                        {bagCount > 99 ? '99+' : bagCount}
+                        {badgeValue > 99 ? '99+' : badgeValue}
                       </span>
                     )}
                   </span>

@@ -257,6 +257,8 @@ export interface Notification {
   message: string;
   link?: string;
   isRead: boolean;
+  readAt?: string;
+  dedupeKey?: string;
   createdAt: string;
 }
 
