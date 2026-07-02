@@ -33,6 +33,7 @@ type RelatedRows = {
   quotationItems: AnyRow[]
   payments: AnyRow[]
   profiles: AnyRow[]
+  requestBags: AnyRow[]
 }
 
 export type PaymentProofInput = {
@@ -112,6 +113,8 @@ function isEnumError(error: unknown) {
   const message = errorMessage(error, '').toLowerCase()
   return (
     message.includes('invalid input value for enum') ||
+    message.includes('invalid input syntax for type') ||
+    message.includes('cannot cast') ||
     message.includes('violates check constraint') ||
     message.includes('not present in enum')
   )
@@ -140,6 +143,35 @@ function firstNumber(row: AnyRow | null | undefined, keys: string[], fallback = 
   if (value === undefined) return fallback
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : fallback
+}
+
+
+function uniqueAddressParts(parts: unknown[]) {
+  const seen = new Set<string>()
+
+  return parts
+    .map((part) => cleanText(part))
+    .filter(Boolean)
+    .filter((part) => {
+      const key = part.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function makeSubmittedAddressSnapshot(input: SubmitPasteLinkOrderInput) {
+  const fullAddress = cleanText(input.deliveryAddress)
+
+  return {
+    recipient_name: cleanText(input.customerName),
+    phone: cleanText(input.customerPhone),
+    customer_phone: cleanText(input.customerPhone),
+    delivery_address: fullAddress,
+    full_address: fullAddress,
+    formatted_address: fullAddress,
+    village: fullAddress,
+  }
 }
 
 function firstJsonObject(row: AnyRow | null | undefined, keys: string[]) {
@@ -324,17 +356,14 @@ function makeShippingAddress(row: AnyRow, userId: string, profiles: AnyRow[] = [
   const nested = firstJsonObject(row, ['shipping_address', 'delivery_address_json', 'address'])
   const profile = findProfileForOrder(row, profiles)
   const source = { ...profile, ...row, ...nested }
-  const submittedAddress = firstString(source, ['delivery_address', 'full_address', 'formatted_address'], '')
-  const addressLine = firstString(source, ['address_line1', 'address1', 'line1', 'street_address', 'town_area', 'town', 'area'], '')
-  const buildingLine = firstString(source, ['address_line2', 'address2', 'line2', 'building', 'building_name', 'house_no', 'flat_no'], '')
+  const submittedAddress = firstString(source, ['delivery_address', 'full_address', 'formatted_address', 'address_text'], '')
+  const addressLine = firstString(source, ['address_line1', 'address1', 'line1', 'street_address', 'town_area', 'town', 'area', 'area_name', 'locality'], '')
+  const buildingLine = firstString(source, ['address_line2', 'address2', 'line2', 'building', 'building_name', 'building_no', 'house_no', 'house_number', 'flat_no', 'apartment', 'room_no'], '')
   const village = firstString(source, ['village', 'delivery_village'], '')
   const gewog = firstString(source, ['gewog', 'delivery_gewog'], '')
-  const dzongkhag = firstString(source, ['dzongkhag', 'delivery_dzongkhag', 'delivery_city'], '')
-  const fullAddress = [submittedAddress, addressLine, buildingLine, village, gewog, dzongkhag]
-    .map((part) => cleanText(part))
-    .filter(Boolean)
-    .filter((part, index, arr) => arr.findIndex((x) => x.toLowerCase() === part.toLowerCase()) === index)
-    .join(', ')
+  const dzongkhag = firstString(source, ['dzongkhag', 'dzongkhag_name', 'delivery_dzongkhag', 'delivery_city'], '')
+  const landmark = firstString(source, ['landmark', 'delivery_landmark'], '')
+  const fullAddress = uniqueAddressParts([submittedAddress, addressLine, buildingLine, village, gewog, dzongkhag, landmark]).join(', ')
 
   return {
     id: firstString(source, ['shipping_address_id', 'address_id'], `addr-${row.id ?? 'order'}`),
@@ -345,7 +374,7 @@ function makeShippingAddress(row: AnyRow, userId: string, profiles: AnyRow[] = [
     dzongkhag,
     gewog,
     village: fullAddress || village || addressLine || submittedAddress,
-    landmark: firstString(source, ['landmark', 'delivery_landmark'], ''),
+    landmark,
     isDefault: false,
     deliveryHubId: firstString(source, ['delivery_hub_id', 'hub_id'], 'hub1'),
   }
@@ -500,11 +529,33 @@ async function makePayment(payment: AnyRow | undefined): Promise<Payment | undef
   }
 }
 
+
+function findRequestBagForOrder(row: AnyRow, requestBags: AnyRow[]) {
+  const orderId = firstString(row, ['id'], '')
+  if (!orderId) return undefined
+  return requestBags.find((bag) => String(bag.submitted_order_id ?? '') === orderId)
+}
+
+function mergeSubmittedRequestBagAddress(row: AnyRow, related: RelatedRows) {
+  const bag = findRequestBagForOrder(row, related.requestBags)
+  if (!bag) return row
+
+  return {
+    ...bag,
+    ...row,
+    customer_name: firstString(row, ['customer_name']) || firstString(bag, ['customer_name']),
+    customer_phone: firstString(row, ['customer_phone']) || firstString(bag, ['customer_phone']),
+    delivery_address: firstString(row, ['delivery_address', 'full_address', 'formatted_address']) || firstString(bag, ['delivery_address', 'full_address', 'formatted_address']),
+    customer_notes: firstString(row, ['customer_notes', 'notes']) || firstString(bag, ['customer_notes']),
+  }
+}
+
 async function mapOrderRow(row: AnyRow, related: RelatedRows, authUserId: string, authEmail = ''): Promise<Order> {
+  const displayRow = mergeSubmittedRequestBagAddress(row, related)
   const items = await makeOrderItems(row, related.items.filter((item) => itemBelongsToOrder(item, row)))
   const quotationRow = related.quotations.find((quotation) => quotationBelongsToOrder(quotation, row))
   const paymentRow = related.payments.find((payment) => paymentBelongsToOrder(payment, row))
-  const customerId = firstString(row, ORDER_OWNER_COLUMNS, authUserId)
+  const customerId = firstString(displayRow, ORDER_OWNER_COLUMNS, authUserId)
 
   return {
     id: firstString(row, ['id'], ''),
@@ -514,16 +565,16 @@ async function mapOrderRow(row: AnyRow, related: RelatedRows, authUserId: string
       firstString(row, ['id'], '').slice(0, 8).toUpperCase()
     ),
     userId: customerId,
-    user: makeFallbackUser(row, authEmail, related.profiles),
+    user: makeFallbackUser(displayRow, authEmail, related.profiles),
     items,
     status: normalizeOrderStatus(firstValue(row, ['status', 'order_status'])),
     type: firstString(row, ['order_type', 'type'], 'paste_link') as OrderType,
     deliveryHubId: firstString(row, ['delivery_hub_id', 'hub_id'], 'hub1'),
-    deliveryHub: makeDeliveryHub(row),
-    shippingAddress: makeShippingAddress(row, customerId, related.profiles),
+    deliveryHub: makeDeliveryHub(displayRow),
+    shippingAddress: makeShippingAddress(displayRow, customerId, related.profiles),
     quotation: makeQuotation(quotationRow, items, related.quotationItems),
     payment: await makePayment(paymentRow),
-    notes: firstString(row, ['notes', 'customer_notes', 'admin_notes'], ''),
+    notes: firstString(displayRow, ['notes', 'customer_notes', 'admin_notes'], ''),
     createdAt: firstString(row, ['created_at'], ''),
     updatedAt: firstString(row, ['updated_at'], firstString(row, ['created_at'], '')),
   }
@@ -555,6 +606,7 @@ async function fetchRelatedRows(orderRows: AnyRow[]): Promise<RelatedRows> {
   const quotations = await safeSelectIn('quotations', 'order_id', dbIds)
   const payments = await safeSelectIn('payments', 'order_id', dbIds)
   const profiles = await safeSelectIn('profiles', 'id', Array.from(new Set(ownerIds)))
+  const requestBags = await safeSelectIn('customer_request_bags', 'submitted_order_id', dbIds)
 
   const quotationIds = quotations.map((quote) => String(quote.id ?? '')).filter(Boolean)
   const quotationItems = await safeSelectIn('quotation_items', 'quotation_id', quotationIds)
@@ -565,6 +617,7 @@ async function fetchRelatedRows(orderRows: AnyRow[]): Promise<RelatedRows> {
     quotationItems,
     payments,
     profiles,
+    requestBags,
   }
 }
 
@@ -1006,32 +1059,41 @@ export async function fetchProductLinkPreview(url: string): Promise<ProductLinkP
 }
 
 function makeOrderPayloadCandidates(input: SubmitPasteLinkOrderInput): AnyRow[] {
+  const deliveryAddress = cleanText(input.deliveryAddress)
   const customerNotes =
     cleanText(input.customerNotes) ||
     `Paste-link order submitted by customer. Name: ${cleanText(input.customerName)}. Phone: ${cleanText(input.customerPhone)}.`
+  const notesWithAddress = deliveryAddress && !customerNotes.toLowerCase().includes('delivery address')
+    ? `${customerNotes}
+
+Delivery address: ${deliveryAddress}`
+    : customerNotes
+  const shippingSnapshot = makeSubmittedAddressSnapshot(input)
 
   const base: AnyRow = {
     user_id: input.userId,
     customer_name: cleanText(input.customerName),
     customer_phone: cleanText(input.customerPhone),
     customer_email: cleanText(input.email),
-    delivery_address: cleanText(input.deliveryAddress) || null,
-    customer_notes: customerNotes,
+    delivery_address: deliveryAddress || null,
+    customer_notes: notesWithAddress,
   }
 
   return [
+    { ...base, shipping_address: shippingSnapshot, order_type: 'paste_link' },
+    { ...base, delivery_address_json: shippingSnapshot, order_type: 'paste_link' },
     { ...base, order_type: 'paste_link' },
     { ...base, order_type: 'external_link' },
     { ...base, type: 'paste_link' },
     {
       user_id: input.userId,
       order_type: 'paste_link',
-      notes: customerNotes,
+      notes: notesWithAddress,
     },
     {
       user_id: input.userId,
       type: 'paste_link',
-      notes: customerNotes,
+      notes: notesWithAddress,
     },
   ]
 }

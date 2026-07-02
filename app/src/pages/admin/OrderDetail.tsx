@@ -27,6 +27,30 @@ function formatAmount(value?: number) {
   return `Nu. ${value.toLocaleString()}`;
 }
 
+
+function compactAddressParts(parts: Array<string | undefined>) {
+  const seen = new Set<string>();
+
+  return parts
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const key = part.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function fullDeliveryAddress(order: Order) {
+  return compactAddressParts([
+    order.shippingAddress.village,
+    order.shippingAddress.gewog,
+    order.shippingAddress.dzongkhag,
+    order.shippingAddress.landmark,
+  ]).join(', ');
+}
+
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -98,6 +122,8 @@ export default function OrderDetail() {
       </div>
     );
   }
+
+  const deliveryAddressText = fullDeliveryAddress(order);
 
   return (
     <div className="space-y-4">
@@ -176,12 +202,9 @@ export default function OrderDetail() {
                 <div>
                   <p className="text-sm font-medium">{order.shippingAddress.recipientName}</p>
                   <p className="text-xs text-neutral-500">{order.shippingAddress.phone || '-'}</p>
-                  <p className="text-xs text-neutral-600 mt-1">
-                    {order.shippingAddress.village || [order.shippingAddress.gewog, order.shippingAddress.dzongkhag].filter(Boolean).join(', ') || '-'}
+                  <p className="text-xs text-neutral-600 mt-1 whitespace-pre-wrap">
+                    {deliveryAddressText || '-'}
                   </p>
-                  {order.shippingAddress.landmark && (
-                    <p className="text-xs text-neutral-500 mt-1">Landmark: {order.shippingAddress.landmark}</p>
-                  )}
                 </div>
               </div>
               <div className="flex items-start gap-2">

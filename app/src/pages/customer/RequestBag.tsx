@@ -116,8 +116,8 @@ function makeAddressText(row: AnyRow, options: DzongkhagOption[]) {
   );
 
   return compactParts([
-    firstString(row, ['delivery_address', 'address_line1', 'address1', 'line1', 'street_address', 'town_area', 'town', 'area']),
-    firstString(row, ['address_line2', 'address2', 'line2', 'building', 'building_name', 'house_no', 'flat_no']),
+    firstString(row, ['delivery_address', 'full_address', 'formatted_address', 'address_text', 'address', 'address_line1', 'address1', 'line1', 'street_address', 'town_area', 'town_area_name', 'town', 'area', 'area_name', 'locality', 'city', 'thromde', 'municipality', 'location']),
+    firstString(row, ['address_line2', 'address2', 'line2', 'building', 'building_name', 'building_no', 'house', 'house_no', 'house_number', 'flat_no', 'apartment', 'floor', 'unit', 'room_no']),
     firstString(row, ['village', 'delivery_village']),
     firstString(row, ['gewog', 'delivery_gewog']),
     dzongkhag,

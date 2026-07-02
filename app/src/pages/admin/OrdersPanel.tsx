@@ -31,6 +31,30 @@ function formatDate(value: string) {
   return date.toLocaleDateString();
 }
 
+
+function compactAddressParts(parts: Array<string | undefined>) {
+  const seen = new Set<string>();
+
+  return parts
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const key = part.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function fullDeliveryAddress(order: Order) {
+  return compactAddressParts([
+    order.shippingAddress.village,
+    order.shippingAddress.gewog,
+    order.shippingAddress.dzongkhag,
+    order.shippingAddress.landmark,
+  ]).join(', ');
+}
+
 export default function OrdersPanel() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -70,6 +94,9 @@ export default function OrdersPanel() {
         order.user.phone,
         order.shippingAddress.dzongkhag,
         order.shippingAddress.village,
+        order.shippingAddress.gewog,
+        order.shippingAddress.landmark,
+        fullDeliveryAddress(order),
         order.notes,
         ...order.items.map((item) => item.productName),
       ]
@@ -187,7 +214,10 @@ export default function OrdersPanel() {
               )}
 
               {!loading &&
-                paginatedOrders.map((order) => (
+                paginatedOrders.map((order) => {
+                  const deliveryAddressText = fullDeliveryAddress(order);
+
+                  return (
                   <tr
                     key={order.id}
                     className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50 transition-colors cursor-pointer"
@@ -201,7 +231,7 @@ export default function OrdersPanel() {
                     <td className="px-4 py-3 text-sm text-neutral-600">{order.user.phone || order.shippingAddress.phone || '-'}</td>
                     <td className="px-4 py-3 text-sm text-neutral-600 max-w-[220px]">
                       <div>{order.shippingAddress.dzongkhag || '-'}</div>
-                      <div className="text-xs text-neutral-400 truncate">{order.shippingAddress.village || order.shippingAddress.landmark || '-'}</div>
+                      <div className="text-xs text-neutral-400 truncate">{deliveryAddressText || '-'}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-neutral-600">{order.items.length}</td>
                     <td className="px-4 py-3 text-sm font-medium">Nu. {order.quotation?.totalAmount?.toLocaleString() || '-'}</td>
@@ -223,7 +253,8 @@ export default function OrdersPanel() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
             </tbody>
           </table>
         </div>
