@@ -264,6 +264,12 @@ export default function QuotationReview() {
                 <span className="font-medium">Nu. {q.taxAmount.toLocaleString()}</span>
               </div>
             )}
+            {(q.additionalChargeAmount ?? 0) > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-neutral-600">{q.additionalChargeLabel || 'Additional Charge'}</span>
+                <span className="font-medium">Nu. {(q.additionalChargeAmount ?? 0).toLocaleString()}</span>
+              </div>
+            )}
           </div>
           <hr className="my-3 border-neutral-200" />
           <div className="flex justify-between">

@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import type {
   Address,
+  DeliveryFeeRule,
   DeliveryHub,
   Order,
   OrderItem,
@@ -13,6 +14,7 @@ import type {
   QuotationStatus,
   RequestBag,
   RequestBagItem,
+  ServiceChargeRule,
   User,
 } from '@/types'
 
@@ -60,6 +62,8 @@ export type CreateAdminQuotationInput = {
   serviceCharge: number
   deliveryFee: number
   taxAmount: number
+  additionalChargeLabel?: string
+  additionalChargeAmount?: number
   notes?: string
   validUntil?: string
 }
@@ -108,6 +112,364 @@ const PLACEHOLDER_PRODUCT_IMAGE =
   encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" rx="18" fill="#f5f5f5"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="16" fill="#a3a3a3">S2B</text></svg>`
   )
+
+const DEFAULT_DELIVERY_FEE_RULES: DeliveryFeeRule[] = [
+  {
+    id: 'delivery-phuntsholing',
+    destination: 'Phuntsholing / Chhukha',
+    destinationKey: 'phuntsholing',
+    dzongkhag: 'Chhukha',
+    hubId: 'phuntsholing',
+    baseFee: 150,
+    perKgFee: 0,
+    estimatedDays: 2,
+    isActive: true,
+    manualQuote: false,
+    sortOrder: 1,
+    notes: 'Border-side delivery destination.',
+  },
+  {
+    id: 'delivery-thimphu',
+    destination: 'Thimphu',
+    destinationKey: 'thimphu',
+    dzongkhag: 'Thimphu',
+    hubId: 'thimphu',
+    baseFee: 350,
+    perKgFee: 0,
+    estimatedDays: 3,
+    isActive: true,
+    manualQuote: false,
+    sortOrder: 2,
+    notes: 'Scheduled delivery to Thimphu.',
+  },
+  {
+    id: 'delivery-paro',
+    destination: 'Paro',
+    destinationKey: 'paro',
+    dzongkhag: 'Paro',
+    hubId: 'paro',
+    baseFee: 400,
+    perKgFee: 0,
+    estimatedDays: 3,
+    isActive: true,
+    manualQuote: false,
+    sortOrder: 3,
+    notes: 'Scheduled delivery to Paro.',
+  },
+  {
+    id: 'delivery-other',
+    destination: 'Other Dzongkhags',
+    destinationKey: 'other',
+    dzongkhag: 'Other',
+    hubId: 'manual',
+    baseFee: 0,
+    perKgFee: 0,
+    estimatedDays: 0,
+    isActive: false,
+    manualQuote: true,
+    sortOrder: 99,
+    notes: 'Orders accepted, delivery not available yet. Quote manually if required.',
+  },
+]
+
+const DEFAULT_SERVICE_CHARGE_RULES: ServiceChargeRule[] = [
+  { id: 'service-0-999', name: 'Starter Orders', minAmount: 0, maxAmount: 999, percentage: 15, flatFee: 100, minimumCharge: 100, isActive: true, requiresManualReview: false, sortOrder: 1 },
+  { id: 'service-1000-1999', name: 'Everyday Orders I', minAmount: 1000, maxAmount: 1999, percentage: 13, flatFee: 200, minimumCharge: 200, isActive: true, requiresManualReview: false, sortOrder: 2 },
+  { id: 'service-2000-4999', name: 'Everyday Orders II', minAmount: 2000, maxAmount: 4999, percentage: 12, flatFee: 300, minimumCharge: 300, isActive: true, requiresManualReview: false, sortOrder: 3 },
+  { id: 'service-5000-9999', name: 'Medium Orders', minAmount: 5000, maxAmount: 9999, percentage: 10, flatFee: 500, minimumCharge: 500, isActive: true, requiresManualReview: false, sortOrder: 4 },
+  { id: 'service-10000-19999', name: 'Large Orders', minAmount: 10000, maxAmount: 19999, percentage: 8, flatFee: 800, minimumCharge: 800, isActive: true, requiresManualReview: false, sortOrder: 5 },
+  { id: 'service-20000-plus', name: 'High Value Orders', minAmount: 20000, maxAmount: null, percentage: 6, flatFee: 0, minimumCharge: 0, isActive: true, requiresManualReview: true, sortOrder: 6 },
+]
+
+export type CalculatedChargeSettings = {
+  serviceCharge: number
+  serviceRule?: ServiceChargeRule
+  serviceNeedsReview: boolean
+  deliveryFee: number
+  deliveryRule?: DeliveryFeeRule
+  deliveryNeedsManualQuote: boolean
+}
+
+function normalizeKey(value: unknown) {
+  return cleanText(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+}
+
+function normalizeDestinationKey(value: unknown) {
+  const text = cleanText(value).toLowerCase()
+  if (text.includes('paro')) return 'paro'
+  if (text.includes('thimphu')) return 'thimphu'
+  if (
+    text.includes('chhukha') ||
+    text.includes('phuntsholing') ||
+    text.includes('phuentsholing') ||
+    text.includes('jaigaon') ||
+    text.includes('pling')
+  ) {
+    return 'phuntsholing'
+  }
+  return normalizeKey(text) || 'other'
+}
+
+function normalizeDeliveryRule(row: AnyRow): DeliveryFeeRule {
+  const destination = firstString(row, ['destination', 'destination_name', 'dzongkhag'], 'Delivery destination')
+  const destinationKey = firstString(row, ['destination_key', 'key'], normalizeDestinationKey(destination))
+
+  return {
+    id: firstString(row, ['id'], destinationKey),
+    destination,
+    destinationKey,
+    dzongkhag: firstString(row, ['dzongkhag'], destination),
+    hubId: firstString(row, ['hub_id', 'delivery_hub_id'], destinationKey),
+    baseFee: firstNumber(row, ['base_fee', 'delivery_fee', 'fee', 'baseFee'], 0),
+    perKgFee: firstNumber(row, ['per_kg_fee', 'perKgFee'], 0),
+    estimatedDays: firstNumber(row, ['estimated_days', 'estimatedDays'], 0),
+    isActive: Boolean(firstValue(row, ['is_active', 'isActive']) ?? true),
+    manualQuote: Boolean(firstValue(row, ['manual_quote', 'manualQuote']) ?? false),
+    sortOrder: firstNumber(row, ['sort_order', 'sortOrder'], 0),
+    notes: firstString(row, ['notes'], ''),
+  }
+}
+
+function normalizeServiceRule(row: AnyRow): ServiceChargeRule {
+  const rawFeeType = firstString(row, ['fee_type', 'feeType'], 'percentage').toLowerCase()
+  const feeValue = firstNumber(row, ['fee_value', 'feeValue'], 0)
+  const percentage = rawFeeType.includes('percent') ? feeValue : firstNumber(row, ['percentage', 'percent'], feeValue)
+  const minimumCharge = firstNumber(row, ['minimum_charge', 'minimumCharge', 'flat_fee', 'flatFee'], 0)
+  const maxValue = firstValue(row, ['max_order_amount', 'max_amount', 'maxAmount'])
+
+  return {
+    id: firstString(row, ['id'], normalizeKey(firstString(row, ['name'], 'service-rule'))),
+    name: firstString(row, ['name', 'tier_name'], 'Service tier'),
+    minAmount: firstNumber(row, ['min_order_amount', 'min_amount', 'minAmount'], 0),
+    maxAmount: maxValue === null || maxValue === undefined || maxValue === '' ? null : firstNumber(row, ['max_order_amount', 'max_amount', 'maxAmount'], 0),
+    percentage,
+    flatFee: minimumCharge,
+    minimumCharge,
+    isActive: Boolean(firstValue(row, ['is_active', 'isActive']) ?? true),
+    requiresManualReview: Boolean(firstValue(row, ['requires_manual_review', 'requiresManualReview']) ?? false),
+    sortOrder: firstNumber(row, ['sort_order', 'sortOrder'], 0),
+  }
+}
+
+function sortDeliveryRules(rules: DeliveryFeeRule[]) {
+  return [...rules].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.destination.localeCompare(b.destination))
+}
+
+function sortServiceRules(rules: ServiceChargeRule[]) {
+  return [...rules].sort((a, b) => a.minAmount - b.minAmount || (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+}
+
+export async function fetchDeliveryFeeRules(): Promise<DeliveryFeeRule[]> {
+  const { data, error } = await supabase.from('delivery_fee_rules').select('*').order('sort_order', { ascending: true })
+
+  if (error) {
+    if (isMissingColumnOrRelationError(error)) return DEFAULT_DELIVERY_FEE_RULES
+    throw error
+  }
+
+  const rules = (data ?? []).map((row) => normalizeDeliveryRule(row as AnyRow))
+  return rules.length ? sortDeliveryRules(rules) : DEFAULT_DELIVERY_FEE_RULES
+}
+
+export async function saveDeliveryFeeRules(rules: DeliveryFeeRule[]): Promise<DeliveryFeeRule[]> {
+  const now = new Date().toISOString()
+
+  for (let index = 0; index < rules.length; index += 1) {
+    const rule = rules[index]
+    const destination = cleanText(rule.destination || rule.dzongkhag) || 'Delivery destination'
+    const destinationKey = normalizeDestinationKey(rule.destinationKey || destination)
+    const payload = {
+      destination,
+      destination_key: destinationKey,
+      dzongkhag: cleanText(rule.dzongkhag) || destination,
+      hub_id: cleanText(rule.hubId) || destinationKey,
+      base_fee: numericAmount(rule.baseFee),
+      per_kg_fee: numericAmount(rule.perKgFee ?? 0),
+      estimated_days: Math.max(0, Math.floor(Number(rule.estimatedDays) || 0)),
+      is_active: Boolean(rule.isActive),
+      manual_quote: Boolean(rule.manualQuote),
+      sort_order: rule.sortOrder ?? index + 1,
+      notes: cleanText(rule.notes) || null,
+      updated_at: now,
+    }
+
+    const result = isUuidLike(cleanText(rule.id))
+      ? await supabase.from('delivery_fee_rules').update(payload).eq('id', rule.id)
+      : await supabase.from('delivery_fee_rules').upsert(payload, { onConflict: 'destination_key' })
+
+    if (result.error) {
+      if (isMissingColumnOrRelationError(result.error)) {
+        throw new Error('Delivery fee settings table is missing. Please run the Step 04C SQL first.')
+      }
+      throw result.error
+    }
+  }
+
+  return fetchDeliveryFeeRules()
+}
+
+export async function fetchServiceChargeRules(): Promise<ServiceChargeRule[]> {
+  const { data, error } = await supabase.from('service_charge_rules').select('*').order('min_order_amount', { ascending: true })
+
+  if (error) {
+    if (isMissingColumnOrRelationError(error)) return DEFAULT_SERVICE_CHARGE_RULES
+    throw error
+  }
+
+  const rules = (data ?? []).map((row) => normalizeServiceRule(row as AnyRow))
+  return rules.length ? sortServiceRules(rules) : DEFAULT_SERVICE_CHARGE_RULES
+}
+
+export async function saveServiceChargeRules(rules: ServiceChargeRule[]): Promise<ServiceChargeRule[]> {
+  const now = new Date().toISOString()
+
+  for (let index = 0; index < rules.length; index += 1) {
+    const rule = rules[index]
+    const payload = {
+      name: cleanText(rule.name) || `Service tier ${index + 1}`,
+      source_platform: null,
+      fee_type: 'percentage',
+      fee_value: numericAmount(rule.percentage),
+      min_order_amount: numericAmount(rule.minAmount),
+      max_order_amount: rule.maxAmount === null || rule.maxAmount === undefined ? null : numericAmount(rule.maxAmount),
+      minimum_charge: numericAmount(rule.minimumCharge ?? rule.flatFee ?? 0),
+      is_default: true,
+      is_active: Boolean(rule.isActive),
+      requires_manual_review: Boolean(rule.requiresManualReview),
+      sort_order: rule.sortOrder ?? index + 1,
+      notes: null,
+      updated_at: now,
+    }
+
+    const result = isUuidLike(cleanText(rule.id))
+      ? await supabase.from('service_charge_rules').update(payload).eq('id', rule.id)
+      : await supabase.from('service_charge_rules').insert(payload)
+
+    if (result.error) {
+      if (isMissingColumnOrRelationError(result.error)) {
+        throw new Error('Service charge settings table is missing or not upgraded. Please run the corrected Step 04C SQL first.')
+      }
+      throw result.error
+    }
+  }
+
+  return fetchServiceChargeRules()
+}
+
+export async function deleteServiceChargeRule(rule: ServiceChargeRule): Promise<ServiceChargeRule[]> {
+  const id = cleanText(rule.id)
+
+  if (!isUuidLike(id)) return fetchServiceChargeRules()
+
+  const result = await supabase.from('service_charge_rules').delete().eq('id', id)
+
+  if (result.error) {
+    if (isMissingColumnOrRelationError(result.error)) {
+      throw new Error('Service charge settings table is missing or not upgraded. Please run the corrected Step 04C SQL first.')
+    }
+    throw result.error
+  }
+
+  return fetchServiceChargeRules()
+}
+
+export async function deleteDeliveryFeeRule(rule: DeliveryFeeRule): Promise<DeliveryFeeRule[]> {
+  const id = cleanText(rule.id)
+  const destinationKey = normalizeDestinationKey(rule.destinationKey || rule.destination || rule.dzongkhag)
+
+  const result = isUuidLike(id)
+    ? await supabase.from('delivery_fee_rules').delete().eq('id', id)
+    : await supabase.from('delivery_fee_rules').delete().eq('destination_key', destinationKey)
+
+  if (result.error) {
+    if (isMissingColumnOrRelationError(result.error)) {
+      throw new Error('Delivery fee settings table is missing. Please run the Step 04C SQL first.')
+    }
+    throw result.error
+  }
+
+  return fetchDeliveryFeeRules()
+}
+
+export function calculateServiceChargeFromRules(productTotal: number, rules: ServiceChargeRule[]) {
+  const amount = numericAmount(productTotal)
+  const activeRules = sortServiceRules(rules.filter((rule) => rule.isActive))
+  const rule =
+    activeRules.find((item) => amount >= item.minAmount && (item.maxAmount === null || item.maxAmount === undefined || amount <= item.maxAmount)) ??
+    activeRules[activeRules.length - 1]
+
+  if (!rule) {
+    return {
+      amount: 0,
+      rule: undefined,
+      needsReview: false,
+    }
+  }
+
+  const percentageAmount = Math.round(amount * (numericAmount(rule.percentage) / 100))
+  const minimumCharge = numericAmount(rule.minimumCharge ?? rule.flatFee ?? 0)
+
+  return {
+    amount: Math.max(percentageAmount, minimumCharge),
+    rule,
+    needsReview: Boolean(rule.requiresManualReview),
+  }
+}
+
+export function resolveDeliveryDestinationKeyForOrder(order: Order) {
+  return normalizeDestinationKey(
+    [
+      order.shippingAddress?.dzongkhag,
+      order.shippingAddress?.village,
+      order.shippingAddress?.gewog,
+      order.shippingAddress?.landmark,
+      order.deliveryHub?.name,
+      order.deliveryHub?.dzongkhag,
+      order.deliveryHub?.address,
+    ].join(' ')
+  )
+}
+
+export function calculateDeliveryFeeForOrder(order: Order, rules: DeliveryFeeRule[]) {
+  const destinationKey = resolveDeliveryDestinationKeyForOrder(order)
+  const activeRules = sortDeliveryRules(rules.filter((rule) => rule.isActive))
+  const rule =
+    activeRules.find((item) => normalizeDestinationKey(item.destinationKey || item.destination || item.dzongkhag) === destinationKey) ??
+    activeRules.find((item) => normalizeDestinationKey(item.destinationKey || item.destination || item.dzongkhag) === 'other')
+
+  if (!rule) {
+    return {
+      amount: 0,
+      rule: undefined,
+      needsManualQuote: true,
+    }
+  }
+
+  return {
+    amount: numericAmount(rule.baseFee),
+    rule,
+    needsManualQuote: Boolean(rule.manualQuote) || numericAmount(rule.baseFee) <= 0,
+  }
+}
+
+export function calculateQuotationSettingsAmounts(params: {
+  order: Order
+  productTotal: number
+  serviceRules: ServiceChargeRule[]
+  deliveryRules: DeliveryFeeRule[]
+}): CalculatedChargeSettings {
+  const service = calculateServiceChargeFromRules(params.productTotal, params.serviceRules)
+  const delivery = calculateDeliveryFeeForOrder(params.order, params.deliveryRules)
+
+  return {
+    serviceCharge: service.amount,
+    serviceRule: service.rule,
+    serviceNeedsReview: service.needsReview,
+    deliveryFee: delivery.amount,
+    deliveryRule: delivery.rule,
+    deliveryNeedsManualQuote: delivery.needsManualQuote,
+  }
+}
 
 function cleanText(value: unknown) {
   return String(value ?? '').trim()
@@ -298,6 +660,7 @@ export function normalizeQuotationStatus(status: unknown): QuotationStatus {
   const raw = String(status ?? '').toLowerCase()
 
   const map: Record<string, QuotationStatus> = {
+    draft: 'pending',
     pending: 'pending',
     sent: 'sent',
     quoted: 'sent',
@@ -523,7 +886,8 @@ function makeQuotation(quotation: AnyRow | undefined, orderItems: OrderItem[], q
   const serviceCharge = firstNumber(quotation, ['service_charge', 'service_fee'], 0)
   const deliveryFee = firstNumber(quotation, ['delivery_fee', 'shipping_fee'], 0)
   const taxAmount = firstNumber(quotation, ['tax_amount', 'tax'], 0)
-  const totalAmount = firstNumber(quotation, ['total_amount', 'total'], productTotal + serviceCharge + deliveryFee + taxAmount)
+  const additionalChargeAmount = firstNumber(quotation, ['additional_charge_amount', 'extra_charge_amount', 'other_charges'], 0)
+  const totalAmount = firstNumber(quotation, ['total_amount', 'total'], productTotal + serviceCharge + deliveryFee + taxAmount + additionalChargeAmount)
 
   return {
     id: firstString(quotation, ['id'], ''),
@@ -534,9 +898,11 @@ function makeQuotation(quotation: AnyRow | undefined, orderItems: OrderItem[], q
     serviceCharge,
     deliveryFee,
     taxAmount,
+    additionalChargeLabel: firstString(quotation, ['additional_charge_label', 'extra_charge_label'], ''),
+    additionalChargeAmount,
     totalAmount,
     validUntil: firstString(quotation, ['valid_until', 'expires_at'], ''),
-    notes: firstString(quotation, ['notes'], ''),
+    notes: firstString(quotation, ['notes', 'customer_message', 'admin_notes'], ''),
     createdAt: firstString(quotation, ['created_at'], ''),
     respondedAt: firstString(quotation, ['responded_at', 'updated_at'], ''),
   }
@@ -777,17 +1143,43 @@ export async function fetchAdminOrderById(orderIdOrNumber: string) {
 }
 
 export async function updateQuotationStatus(quotationId: string, status: QuotationStatus) {
-  const withTimestamp = await supabase
-    .from('quotations')
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq('id', quotationId)
+  const now = new Date().toISOString()
+  const statusCandidates =
+    status === 'approved'
+      ? ['approved', 'accepted']
+      : status === 'rejected'
+        ? ['rejected', 'declined']
+        : status === 'sent'
+          ? ['sent', 'pending', 'draft']
+          : [status]
 
-  if (!withTimestamp.error) return
+  let lastError: unknown = null
 
-  if (!isMissingColumnOrRelationError(withTimestamp.error)) throw withTimestamp.error
+  for (const dbStatus of statusCandidates) {
+    const payload: AnyRow = {
+      status: dbStatus,
+      updated_at: now,
+    }
 
-  const withoutTimestamp = await supabase.from('quotations').update({ status }).eq('id', quotationId)
-  if (withoutTimestamp.error) throw withTimestamp.error
+    if (dbStatus === 'accepted') payload.accepted_at = now
+
+    const withTimestamp = await supabase.from('quotations').update(payload).eq('id', quotationId)
+    if (!withTimestamp.error) return
+
+    lastError = withTimestamp.error
+    if (!shouldTryFallbackPayload(withTimestamp.error)) throw withTimestamp.error
+
+    const fallbackPayload: AnyRow = { status: dbStatus }
+    if (dbStatus === 'accepted') fallbackPayload.accepted_at = now
+
+    const withoutTimestamp = await supabase.from('quotations').update(fallbackPayload).eq('id', quotationId)
+    if (!withoutTimestamp.error) return
+
+    lastError = withoutTimestamp.error
+    if (!shouldTryFallbackPayload(withoutTimestamp.error)) throw withoutTimestamp.error
+  }
+
+  throw new Error(errorMessage(lastError, 'Unable to update quotation status.'))
 }
 
 export async function updateCustomerOrderStatus(orderId: string, status: OrderStatus) {
@@ -826,7 +1218,9 @@ function makeQuotationPayloadCandidates(input: CreateAdminQuotationInput, status
   const serviceCharge = numericAmount(input.serviceCharge)
   const deliveryFee = numericAmount(input.deliveryFee)
   const taxAmount = numericAmount(input.taxAmount)
-  const totalAmount = productTotal + serviceCharge + deliveryFee + taxAmount
+  const additionalChargeAmount = numericAmount(input.additionalChargeAmount ?? 0)
+  const additionalChargeLabel = cleanText(input.additionalChargeLabel) || null
+  const totalAmount = productTotal + serviceCharge + deliveryFee + taxAmount + additionalChargeAmount
   const notes = cleanText(input.notes) || null
   const validUntil = cleanText(input.validUntil) || null
   const now = new Date().toISOString()
@@ -836,61 +1230,63 @@ function makeQuotationPayloadCandidates(input: CreateAdminQuotationInput, status
       order_id: input.orderId,
       status,
       product_subtotal: productTotal,
-      service_charge: serviceCharge,
+      shipping_fee: 0,
+      service_fee: serviceCharge,
       delivery_fee: deliveryFee,
-      tax_amount: taxAmount,
+      discount_amount: 0,
+      additional_charge_label: additionalChargeLabel,
+      additional_charge_amount: additionalChargeAmount,
+      total_amount: totalAmount,
+      advance_required: 0,
+      due_amount: totalAmount,
+      currency: 'BTN',
+      admin_notes: notes,
+      customer_message: notes,
+      expires_at: validUntil,
+      updated_at: now,
+    },
+    {
+      order_id: input.orderId,
+      status,
+      product_subtotal: productTotal,
+      shipping_fee: 0,
+      service_fee: serviceCharge,
+      delivery_fee: deliveryFee,
+      discount_amount: 0,
+      total_amount: totalAmount,
+      advance_required: 0,
+      due_amount: totalAmount,
+      currency: 'BTN',
+      admin_notes: notes,
+      customer_message: notes,
+      expires_at: validUntil,
+      updated_at: now,
+    },
+    {
+      order_id: input.orderId,
+      status,
+      product_subtotal: productTotal,
+      service_fee: serviceCharge,
+      delivery_fee: deliveryFee,
+      shipping_fee: deliveryFee,
       total_amount: totalAmount,
       currency: 'BTN',
-      valid_until: validUntil,
-      notes,
-      updated_at: now,
-    },
-    {
-      order_id: input.orderId,
-      status,
-      product_subtotal: productTotal,
-      service_charge: serviceCharge,
-      delivery_fee: deliveryFee,
-      tax_amount: taxAmount,
-      total_amount: totalAmount,
-      valid_until: validUntil,
-      notes,
-      updated_at: now,
-    },
-    {
-      order_id: input.orderId,
-      status,
-      product_total: productTotal,
-      service_charge: serviceCharge,
-      delivery_fee: deliveryFee,
-      tax_amount: taxAmount,
-      total_amount: totalAmount,
-      valid_until: validUntil,
-      notes,
-      updated_at: now,
-    },
-    {
-      order_id: input.orderId,
-      status,
-      subtotal: productTotal,
-      service_fee: serviceCharge,
-      shipping_fee: deliveryFee,
-      tax: taxAmount,
-      total: totalAmount,
       expires_at: validUntil,
-      notes,
+      admin_notes: notes,
+      customer_message: notes,
       updated_at: now,
     },
     {
       order_id: input.orderId,
       status,
       product_subtotal: productTotal,
-      service_charge: serviceCharge,
+      service_fee: serviceCharge,
       delivery_fee: deliveryFee,
-      tax_amount: taxAmount,
       total_amount: totalAmount,
-      valid_until: validUntil,
-      notes,
+      currency: 'BTN',
+      expires_at: validUntil,
+      admin_notes: notes,
+      customer_message: notes,
     },
   ]
 }
@@ -919,7 +1315,7 @@ async function findQuotationRowForOrder(orderId: string) {
 }
 
 async function saveQuotationRow(input: CreateAdminQuotationInput, existingQuotationId?: string) {
-  const statusCandidates = ['sent', 'pending', 'quoted']
+  const statusCandidates = ['sent', 'pending', 'draft', 'quoted']
   let lastError: unknown = null
 
   for (const status of statusCandidates) {

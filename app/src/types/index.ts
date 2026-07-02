@@ -171,6 +171,8 @@ export interface Quotation {
   serviceCharge: number;
   deliveryFee: number;
   taxAmount: number;
+  additionalChargeLabel?: string;
+  additionalChargeAmount?: number;
   totalAmount: number;
   validUntil: string;
   notes?: string;
@@ -262,12 +264,17 @@ export interface Notification {
 
 export interface DeliveryFeeRule {
   id: string;
+  destination: string;
+  destinationKey?: string;
   dzongkhag: string;
-  hubId: string;
+  hubId?: string;
   baseFee: number;
-  perKgFee: number;
+  perKgFee?: number;
   estimatedDays: number;
   isActive: boolean;
+  manualQuote?: boolean;
+  sortOrder?: number;
+  notes?: string;
 }
 
 export interface ServiceChargeRule {
@@ -277,6 +284,9 @@ export interface ServiceChargeRule {
   maxAmount: number | null;
   percentage: number;
   flatFee?: number;
+  minimumCharge?: number;
+  requiresManualReview?: boolean;
+  sortOrder?: number;
   isActive: boolean;
 }
 
