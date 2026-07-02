@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   Camera,
+  CheckCircle,
+  Edit3,
   ExternalLink,
   ImageIcon,
   Info,
@@ -12,12 +14,14 @@ import {
   Minus,
   Phone,
   Plus,
+  ShieldCheck,
   Sparkles,
   Trash2,
   User,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import {
   detectSourcePlatformFromUrl,
   fetchProductLinkPreview,
@@ -34,12 +38,42 @@ const platforms = [
   { name: 'Meesho', key: 'meesho', color: 'bg-violet-100 text-violet-700 border-violet-300', initial: 'M' },
 ];
 
+type AnyRow = Record<string, any>;
+
 type ProfileLike = {
-  full_name?: string;
-  name?: string;
-  phone?: string;
-  dzongkhag?: string;
-  delivery_address?: string;
+  full_name?: string | null;
+  name?: string | null;
+  phone?: string | null;
+  default_dzongkhag_id?: string | null;
+  dzongkhag?: string | null;
+  delivery_address?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  gewog?: string | null;
+  village?: string | null;
+  landmark?: string | null;
+};
+
+type DzongkhagOption = {
+  id: string;
+  name: string;
+};
+
+type CustomerAddress = {
+  id: string;
+  label: string;
+  recipientName: string;
+  phone: string;
+  dzongkhag: string;
+  gewog: string;
+  village: string;
+  landmark: string;
+  addressLine1: string;
+  addressLine2: string;
+  isDefault: boolean;
+  deliveryHubId: string;
+  deliveryHubName: string;
+  formattedAddress: string;
 };
 
 type PasteLinkDraftItem = PasteLinkOrderItemInput & {
@@ -66,17 +100,116 @@ const emptyPreview: PreviewState = {
   error: '',
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function cleanString(value: unknown) {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+function firstString(row: AnyRow | null | undefined, keys: string[], fallback = '') {
+  if (!row) return fallback;
+
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+
+  return fallback;
+}
+
+function compactParts(parts: unknown[]) {
+  const seen = new Set<string>();
+
+  return parts
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const key = part.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function normalizeDzongkhagOptions(data: unknown): DzongkhagOption[] {
+  if (!Array.isArray(data)) return [];
+
+  return data
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as AnyRow;
+      const id = cleanString(row.id);
+      const name = cleanString(row.name);
+      return id && name ? { id, name } : null;
+    })
+    .filter((item): item is DzongkhagOption => Boolean(item));
+}
+
+function getDzongkhagDisplayName(value: string | null | undefined, options: DzongkhagOption[]) {
+  const cleanValue = value?.trim() || '';
+  if (!cleanValue) return '';
+  if (!UUID_RE.test(cleanValue)) return cleanValue;
+  return options.find((item) => item.id === cleanValue)?.name || '';
+}
+
 function makeProductName(platform: string) {
   if (!platform || platform === 'other') return 'Pasted product link';
   return `Product from ${platform.charAt(0).toUpperCase()}${platform.slice(1)}`;
 }
 
-function makeDeliveryAddress(profile: ProfileLike | null) {
-  const parts = [profile?.delivery_address, profile?.dzongkhag]
-    .map((part) => String(part ?? '').trim())
-    .filter(Boolean);
+function makeAddressText(row: AnyRow, options: DzongkhagOption[]) {
+  const dzongkhag = getDzongkhagDisplayName(
+    firstString(row, ['dzongkhag', 'dzongkhag_name', 'default_dzongkhag_id', 'delivery_dzongkhag', 'delivery_city']),
+    options
+  );
 
-  return Array.from(new Set(parts)).join(', ');
+  return compactParts([
+    firstString(row, ['delivery_address', 'address_line1', 'address1', 'line1', 'street_address']),
+    firstString(row, ['address_line2', 'address2', 'line2']),
+    firstString(row, ['village', 'delivery_village']),
+    firstString(row, ['gewog', 'delivery_gewog']),
+    dzongkhag,
+    firstString(row, ['landmark', 'delivery_landmark']),
+  ]).join(', ');
+}
+
+function makeDeliveryAddress(profile: ProfileLike | null, options: DzongkhagOption[]) {
+  if (!profile) return '';
+
+  return makeAddressText(profile as AnyRow, options);
+}
+
+function mapCustomerAddress(row: AnyRow, options: DzongkhagOption[]): CustomerAddress {
+  const dzongkhag = getDzongkhagDisplayName(
+    firstString(row, ['dzongkhag', 'dzongkhag_name', 'dzongkhag_id', 'delivery_dzongkhag', 'delivery_city']),
+    options
+  );
+
+  const addressLine1 = firstString(row, ['delivery_address', 'address_line1', 'address1', 'line1', 'street_address']);
+  const addressLine2 = firstString(row, ['address_line2', 'address2', 'line2']);
+  const village = firstString(row, ['village', 'delivery_village']);
+  const gewog = firstString(row, ['gewog', 'delivery_gewog']);
+  const landmark = firstString(row, ['landmark', 'delivery_landmark']);
+
+  return {
+    id: firstString(row, ['id'], ''),
+    label: firstString(row, ['label', 'address_label'], 'Delivery'),
+    recipientName: firstString(row, ['recipient_name', 'name', 'full_name', 'customer_name'], ''),
+    phone: firstString(row, ['phone', 'recipient_phone', 'delivery_phone', 'customer_phone', 'whatsapp'], ''),
+    dzongkhag,
+    gewog,
+    village,
+    landmark,
+    addressLine1,
+    addressLine2,
+    isDefault: Boolean(row.is_default ?? row.isDefault ?? row.default),
+    deliveryHubId: firstString(row, ['delivery_hub_id', 'hub_id'], ''),
+    deliveryHubName: firstString(row, ['delivery_hub_name', 'hub_name', 'delivery_hub'], ''),
+    formattedAddress: compactParts([addressLine1, addressLine2, village, gewog, dzongkhag, landmark]).join(', '),
+  };
 }
 
 function formatPrice(value?: number, currency = 'INR') {
@@ -106,6 +239,25 @@ function isPreviewForUrl(preview: PreviewState, cleanUrl: string) {
   return Boolean(preview.data && preview.url === cleanUrl);
 }
 
+async function fetchSavedDefaultAddress(userId: string, options: DzongkhagOption[]) {
+  const { data, error } = await supabase
+    .from('customer_addresses')
+    .select('*')
+    .eq('user_id', userId)
+    .limit(25);
+
+  if (error) {
+    console.warn('[PasteLink] Saved address lookup skipped:', error.message);
+    return null;
+  }
+
+  const rows = Array.isArray(data) ? (data as AnyRow[]) : [];
+  if (rows.length === 0) return null;
+
+  const defaultRow = rows.find((row) => Boolean(row.is_default ?? row.isDefault ?? row.default)) || rows[0];
+  return mapCustomerAddress(defaultRow, options);
+}
+
 export default function PasteLink() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -124,6 +276,10 @@ export default function PasteLink() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const profile = (context?.profile ?? null) as ProfileLike | null;
+  const [dzongkhagOptions, setDzongkhagOptions] = useState<DzongkhagOption[]>([]);
+  const [savedAddress, setSavedAddress] = useState<CustomerAddress | null>(null);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [deliveryExpanded, setDeliveryExpanded] = useState(false);
 
   const [customer, setCustomer] = useState({
     name: '',
@@ -134,23 +290,82 @@ export default function PasteLink() {
 
   const cleanUrl = useMemo(() => normalizeProductUrl(url), [url]);
   const canTryPreview = cleanUrl && cleanUrl.length > 14 && cleanUrl.includes('.');
+  const hasDeliveryAddress = Boolean(customer.deliveryAddress.trim());
+  const showDeliveryFields = deliveryExpanded || !hasDeliveryAddress;
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadDzongkhags() {
+      const { data, error } = await supabase.rpc('get_dzongkhag_options');
+
+      if (!active) return;
+      if (!error) setDzongkhagOptions(normalizeDzongkhagOptions(data));
+    }
+
+    void loadDzongkhags();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setSavedAddress(null);
+      return;
+    }
+
+    const activeUserId = user.id;
+    let active = true;
+
+    async function loadSavedAddress() {
+      setAddressLoading(true);
+
+      try {
+        const address = await fetchSavedDefaultAddress(activeUserId, dzongkhagOptions);
+        if (!active) return;
+
+        setSavedAddress(address);
+
+        if (address) {
+          setCustomer((prev) => ({
+            name: prev.name || address.recipientName,
+            phone: prev.phone || address.phone,
+            deliveryAddress: prev.deliveryAddress || address.formattedAddress,
+            notes: prev.notes,
+          }));
+        }
+      } finally {
+        if (active) setAddressLoading(false);
+      }
+    }
+
+    void loadSavedAddress();
+
+    return () => {
+      active = false;
+    };
+  }, [user, dzongkhagOptions]);
 
   useEffect(() => {
     if (!user) return;
 
     const profileName =
-      profile?.full_name ||
-      profile?.name ||
+      profile?.full_name?.trim() ||
+      profile?.name?.trim() ||
       user.email?.split('@')[0] ||
       '';
 
+    const profileAddress = makeDeliveryAddress(profile, dzongkhagOptions);
+
     setCustomer((prev) => ({
       name: prev.name || profileName,
-      phone: prev.phone || profile?.phone || '',
-      deliveryAddress: prev.deliveryAddress || makeDeliveryAddress(profile),
+      phone: prev.phone || profile?.phone?.trim() || '',
+      deliveryAddress: prev.deliveryAddress || profileAddress,
       notes: prev.notes,
     }));
-  }, [user, profile]);
+  }, [user, profile, dzongkhagOptions]);
 
   useEffect(() => {
     if (!canTryPreview) {
@@ -325,11 +540,19 @@ export default function PasteLink() {
 
     if (!customer.name.trim()) {
       setSubmitError('Please enter your name.');
+      setDeliveryExpanded(true);
       return;
     }
 
     if (!customer.phone.trim()) {
       setSubmitError('Please enter your phone number.');
+      setDeliveryExpanded(true);
+      return;
+    }
+
+    if (!customer.deliveryAddress.trim()) {
+      setSubmitError('Please select or enter your delivery address.');
+      setDeliveryExpanded(true);
       return;
     }
 
@@ -342,7 +565,7 @@ export default function PasteLink() {
         customerName: customer.name,
         customerPhone: customer.phone,
         deliveryAddress: customer.deliveryAddress,
-        customerNotes: customer.notes || 'Paste-link order submitted by customer.',
+        customerNotes: customer.notes || 'Paste-link quote request submitted by customer.',
         items,
       });
 
@@ -352,7 +575,7 @@ export default function PasteLink() {
       setSubmitError(
         error instanceof Error
           ? error.message
-          : 'Unable to submit your order. Please try again.'
+          : 'Unable to submit your quote request. Please try again.'
       );
     } finally {
       setSubmitting(false);
@@ -360,12 +583,26 @@ export default function PasteLink() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 pb-56">
+    <div className="min-h-screen bg-neutral-50 pb-64">
       <div className="bg-white px-5 pt-6 pb-5 border-b border-neutral-100">
-        <h1 className="text-2xl font-bold text-gray-900">Request Product</h1>
-        <p className="text-sm text-neutral-500 mt-1">
-          Paste a product link or upload a product screenshot. We will verify details and send you a quotation.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Request Product</h1>
+            <p className="text-sm text-neutral-500 mt-1">
+              Paste a product link or upload a screenshot. We verify the price before you pay.
+            </p>
+          </div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
+            <ShieldCheck size={20} />
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-bold text-amber-900">No payment required now</p>
+          <p className="mt-0.5 text-xs leading-5 text-amber-700">
+            Submit your request first. Shop2Bhutan will confirm availability, price, service fee, and delivery fee.
+          </p>
+        </div>
 
         <div className="flex gap-3 mt-5 justify-center">
           {platforms.map((p) => (
@@ -413,7 +650,6 @@ export default function PasteLink() {
             )}
           </div>
 
-          {/* Screenshot Upload */}
           <div className="mt-3">
             <input
               ref={fileInputRef}
@@ -427,10 +663,10 @@ export default function PasteLink() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full h-12 border-2 border-dashed border-neutral-300 rounded-xl flex items-center justify-center gap-2 text-sm text-neutral-500 hover:border-amber-400 hover:text-amber-600 transition-colors"
+                className="w-full min-h-12 border-2 border-dashed border-neutral-300 rounded-xl px-3 py-3 flex items-center justify-center gap-2 text-sm text-neutral-500 hover:border-amber-400 hover:text-amber-600 transition-colors"
               >
                 <Camera size={18} />
-                Upload product screenshot
+                <span>Upload screenshot for size, color, or unavailable links</span>
               </button>
             ) : (
               <div className="relative rounded-xl border border-neutral-200 bg-white overflow-hidden">
@@ -484,7 +720,7 @@ export default function PasteLink() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <Sparkles size={13} className="text-amber-500" />
                     <span className="text-[11px] font-semibold text-amber-600">
-                      {preview.data.fetched ? 'Product preview found' : 'Product details not detected'}
+                      {preview.data.fetched ? 'Product preview found' : 'Manual verification needed'}
                     </span>
                   </div>
                   <p className="text-sm font-semibold text-gray-900 line-clamp-2">
@@ -541,7 +777,7 @@ export default function PasteLink() {
               </>
             ) : (
               <>
-                Add to Quote Request
+                Add Product
                 <Plus size={18} />
               </>
             )}
@@ -553,8 +789,8 @@ export default function PasteLink() {
         <div className="px-4 mt-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h3 className="text-base font-semibold text-gray-900">Your Request Items</h3>
-              <p className="text-xs text-neutral-500">Review or edit details before submitting your quote request.</p>
+              <h3 className="text-base font-semibold text-gray-900">Review Products</h3>
+              <p className="text-xs text-neutral-500">Add quantity, size, color, or other instructions.</p>
             </div>
             <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full">
               {items.length}
@@ -659,7 +895,7 @@ export default function PasteLink() {
                 <textarea
                   value={item.notes || ''}
                   onChange={(e) => updateItem(item.id, { notes: e.target.value })}
-                  placeholder="Color, size, variant, or any instruction for this item..."
+                  placeholder="Size, color, variant, or instruction for this item..."
                   rows={2}
                   className="w-full mt-3 px-3 py-2 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
                 />
@@ -672,55 +908,153 @@ export default function PasteLink() {
       {items.length > 0 && (
         <div className="px-4 mt-4">
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-neutral-100 space-y-3">
-            <div>
-              <h3 className="text-base font-semibold text-gray-900">Contact & Delivery</h3>
-              <p className="text-xs text-neutral-500">Used by admin to prepare and confirm your quotation.</p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Contact & Delivery</h3>
+                <p className="text-xs text-neutral-500">
+                  {addressLoading ? 'Loading your saved delivery address...' : 'Used by admin to prepare and confirm your quotation.'}
+                </p>
+              </div>
+              {hasDeliveryAddress && !showDeliveryFields && (
+                <button
+                  type="button"
+                  onClick={() => setDeliveryExpanded(true)}
+                  className="flex items-center gap-1 rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-semibold text-neutral-600"
+                >
+                  <Edit3 size={13} />
+                  Edit
+                </button>
+              )}
             </div>
 
             {!user && (
               <div className="rounded-lg bg-orange-50 border border-orange-100 px-3 py-2 text-xs text-orange-700">
-                Please sign in before submitting your order.
+                Please sign in before submitting your request.
               </div>
             )}
 
-            <div className="relative">
-              <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-              <input
-                value={customer.name}
-                onChange={(e) => setCustomer((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="Customer name"
-                className="w-full h-11 pl-9 pr-3 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              />
-            </div>
+            {user && addressLoading && (
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-3 text-xs text-neutral-500 flex items-center gap-2">
+                <Loader2 size={15} className="animate-spin text-amber-500" />
+                Loading saved delivery address...
+              </div>
+            )}
 
-            <div className="relative">
-              <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-              <input
-                value={customer.phone}
-                onChange={(e) => setCustomer((prev) => ({ ...prev, phone: e.target.value }))}
-                placeholder="Phone number"
-                className="w-full h-11 pl-9 pr-3 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              />
-            </div>
+            {user && !addressLoading && !hasDeliveryAddress && (
+              <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3">
+                <p className="text-sm font-bold text-amber-900">No default delivery address found</p>
+                <p className="mt-0.5 text-xs leading-5 text-amber-700">
+                  Add one in Saved Addresses, or type the delivery details below for this request.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/addresses')}
+                  className="mt-2 text-xs font-bold text-amber-700 underline"
+                >
+                  Manage saved addresses
+                </button>
+              </div>
+            )}
 
-            <div className="relative">
-              <MapPin size={16} className="absolute left-3 top-3 text-neutral-400" />
+            {hasDeliveryAddress && !showDeliveryFields && (
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-600">
+                    <CheckCircle size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-bold text-emerald-900">
+                        {savedAddress?.label ? `${savedAddress.label} address loaded` : 'Delivery address loaded'}
+                      </p>
+                      {savedAddress?.isDefault && (
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
+                          Default
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-emerald-800">{customer.deliveryAddress}</p>
+                    <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-emerald-700">
+                      <span>{customer.name || 'Customer name not set'}</span>
+                      <span>{customer.phone || 'Phone number not set'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {showDeliveryFields && (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                    Customer name
+                  </label>
+                  <div className="relative">
+                    <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                    <input
+                      value={customer.name}
+                      onChange={(e) => setCustomer((prev) => ({ ...prev, name: e.target.value }))}
+                      placeholder="Customer name"
+                      className="w-full h-11 pl-9 pr-3 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                    Phone number
+                  </label>
+                  <div className="relative">
+                    <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                    <input
+                      value={customer.phone}
+                      onChange={(e) => setCustomer((prev) => ({ ...prev, phone: e.target.value }))}
+                      placeholder="Phone number"
+                      className="w-full h-11 pl-9 pr-3 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                    Delivery address
+                  </label>
+                  <div className="relative">
+                    <MapPin size={16} className="absolute left-3 top-3 text-neutral-400" />
+                    <textarea
+                      value={customer.deliveryAddress}
+                      onChange={(e) => setCustomer((prev) => ({ ...prev, deliveryAddress: e.target.value }))}
+                      placeholder="Dzongkhag, delivery address, or nearest hub"
+                      rows={2}
+                      className="w-full pl-9 pr-3 py-2 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
+                    />
+                  </div>
+                </div>
+
+                {hasDeliveryAddress && (
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryExpanded(false)}
+                    className="w-full h-10 rounded-xl bg-neutral-100 text-sm font-bold text-neutral-700"
+                  >
+                    Use this delivery detail
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                Extra instruction for admin
+              </label>
               <textarea
-                value={customer.deliveryAddress}
-                onChange={(e) => setCustomer((prev) => ({ ...prev, deliveryAddress: e.target.value }))}
-                placeholder="Dzongkhag, delivery address, or nearest hub"
+                value={customer.notes}
+                onChange={(e) => setCustomer((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="Example: call before delivery, prefer weekend pickup, confirm size before ordering..."
                 rows={2}
-                className="w-full pl-9 pr-3 py-2 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
+                className="w-full px-3 py-2 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
               />
             </div>
-
-            <textarea
-              value={customer.notes}
-              onChange={(e) => setCustomer((prev) => ({ ...prev, notes: e.target.value }))}
-              placeholder="Extra instruction for Shop2Bhutan admin..."
-              rows={2}
-              className="w-full px-3 py-2 border border-neutral-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
-            />
           </div>
         </div>
       )}
@@ -755,31 +1089,36 @@ export default function PasteLink() {
       </div>
 
       {submitError && (
-        <div className="fixed left-4 right-4 bottom-[148px] md:bottom-20 z-[60] rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 shadow-lg">
+        <div className="fixed left-4 right-4 bottom-[168px] md:bottom-24 z-[60] rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 shadow-lg">
           {submitError}
         </div>
       )}
 
       {items.length > 0 && (
-        <div className="fixed left-0 right-0 bottom-[72px] md:bottom-0 bg-white border-t border-neutral-200 p-4 z-[60]">
-          <button
-            type="button"
-            onClick={handleSubmitOrder}
-            disabled={submitting}
-            className="w-full h-12 bg-amber-500 text-white font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-amber-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {submitting ? (
-              <>
-                <Loader2 size={18} className="animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              <>
-                Submit Quote Request
-                <ArrowRight size={18} />
-              </>
-            )}
-          </button>
+        <div className="fixed left-0 right-0 bottom-[72px] md:bottom-0 bg-white border-t border-neutral-200 px-4 py-3 z-[60]">
+          <div className="mx-auto max-w-md">
+            <p className="mb-2 text-center text-[11px] font-medium text-neutral-500">
+              No payment now. You will receive a quotation first.
+            </p>
+            <button
+              type="button"
+              onClick={handleSubmitOrder}
+              disabled={submitting}
+              className="w-full h-12 bg-amber-500 text-white font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-amber-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Submitting Request...
+                </>
+              ) : (
+                <>
+                  Request Quotation
+                  <ArrowRight size={18} />
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
     </div>
