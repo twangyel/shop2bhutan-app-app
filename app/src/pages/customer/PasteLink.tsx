@@ -314,7 +314,7 @@ export default function PasteLink() {
     setSubmitError('');
 
     if (!user) {
-      navigate('/login');
+      navigate('/login', { state: { from: location.pathname } });
       return;
     }
 

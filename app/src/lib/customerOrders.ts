@@ -14,9 +14,14 @@ import type {
   User,
 } from '@/types'
 
-// Step 05 helper: customer-facing order reads + payment proof upload.
-// Keep admin roles in public.user_roles untouched. This file relies on RLS so
-// customers can only see/update rows allowed by your backend policies.
+// React Order Step 03 helper:
+// - customer order reads
+// - admin order reads
+// - paste-link order submission
+// - private order-screenshots uploads
+//
+// Important: related tables must always use orders.id UUID.
+// orders.order_no is display only.
 
 type AnyRow = Record<string, any>
 
@@ -25,6 +30,7 @@ type RelatedRows = {
   quotations: AnyRow[]
   quotationItems: AnyRow[]
   payments: AnyRow[]
+  profiles: AnyRow[]
 }
 
 export type PaymentProofInput = {
@@ -36,15 +42,61 @@ export type PaymentProofInput = {
   amount: number
 }
 
+export type ProductLinkPreview = {
+  url: string
+  platform: string
+  title: string
+  image?: string
+  price?: number
+  currency?: string
+  fetched: boolean
+  message?: string
+}
+
+export type PasteLinkOrderItemInput = {
+  sourceUrl?: string
+  sourcePlatform?: string
+  productName?: string
+  productImage?: string
+  price?: number
+  quantity?: number
+  notes?: string
+  screenshotFile?: File
+  attachmentPath?: string
+}
+
+export type SubmitPasteLinkOrderInput = {
+  userId: string
+  email?: string | null
+  customerName: string
+  customerPhone: string
+  deliveryAddress?: string | null
+  customerNotes?: string | null
+  items: PasteLinkOrderItemInput[]
+}
+
+export type SubmitPasteLinkOrderResult = {
+  orderId: string
+  orderNo: string
+}
+
 const ORDER_OWNER_COLUMNS = ['user_id', 'customer_id', 'profile_id']
 const PLACEHOLDER_PRODUCT_IMAGE =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" fill="#f5f5f5"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="16" fill="#a3a3a3">S2B</text></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" rx="18" fill="#f5f5f5"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="16" fill="#a3a3a3">S2B</text></svg>`
   )
 
+function cleanText(value: unknown) {
+  return String(value ?? '').trim()
+}
+
+function errorMessage(error: unknown, fallback = 'Unexpected Supabase error.') {
+  return cleanText((error as { message?: string })?.message) || fallback
+}
+
 function isMissingColumnOrRelationError(error: unknown) {
-  const message = String((error as { message?: string })?.message ?? '').toLowerCase()
+  const message = errorMessage(error, '').toLowerCase()
   return (
     message.includes('does not exist') ||
     message.includes('schema cache') ||
@@ -52,6 +104,19 @@ function isMissingColumnOrRelationError(error: unknown) {
     message.includes('column') ||
     message.includes('relationship')
   )
+}
+
+function isEnumError(error: unknown) {
+  const message = errorMessage(error, '').toLowerCase()
+  return (
+    message.includes('invalid input value for enum') ||
+    message.includes('violates check constraint') ||
+    message.includes('not present in enum')
+  )
+}
+
+function shouldTryFallbackPayload(error: unknown) {
+  return isMissingColumnOrRelationError(error) || isEnumError(error)
 }
 
 function firstValue(row: AnyRow | null | undefined, keys: string[]) {
@@ -105,6 +170,46 @@ function toArray(value: unknown) {
     }
   }
   return [] as unknown[]
+}
+
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+function isExternalOrDataUrl(value: string) {
+  return /^(https?:|data:|blob:)/i.test(value)
+}
+
+async function makeSignedScreenshotUrl(pathOrUrl: string) {
+  const value = cleanText(pathOrUrl)
+  if (!value) return ''
+  if (isExternalOrDataUrl(value)) return value
+
+  const { data, error } = await supabase.storage.from('order-screenshots').createSignedUrl(value, 60 * 30)
+  if (error) {
+    console.warn('[customerOrders] signed URL skipped:', error.message)
+    return ''
+  }
+
+  return data?.signedUrl || ''
+}
+
+async function makeDisplayImage(primary: string, fallbackPath?: string) {
+  const primaryValue = cleanText(primary)
+  if (primaryValue) {
+    if (isExternalOrDataUrl(primaryValue)) return primaryValue
+
+    const signed = await makeSignedScreenshotUrl(primaryValue)
+    if (signed) return signed
+  }
+
+  const fallbackValue = cleanText(fallbackPath)
+  if (fallbackValue) {
+    const signed = await makeSignedScreenshotUrl(fallbackValue)
+    if (signed) return signed
+  }
+
+  return PLACEHOLDER_PRODUCT_IMAGE
 }
 
 export function normalizeOrderStatus(status: unknown): OrderStatus {
@@ -171,20 +276,31 @@ export function normalizePaymentStatus(status: unknown): PaymentStatus {
   return map[raw] ?? 'pending'
 }
 
-function isUuidLike(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+function findProfileForOrder(row: AnyRow, profiles: AnyRow[]) {
+  const ownerId = firstString(row, ORDER_OWNER_COLUMNS, '')
+  if (!ownerId) return undefined
+  return profiles.find((profile) => String(profile.id ?? '') === ownerId)
 }
 
-function makeFallbackUser(userId: string, email = ''): User {
+function makeFallbackUser(rowOrUserId: AnyRow | string, email = '', profiles: AnyRow[] = []): User {
+  const row = typeof rowOrUserId === 'string' ? ({ user_id: rowOrUserId } as AnyRow) : rowOrUserId
+  const profile = findProfileForOrder(row, profiles)
+  const userId = firstString(row, ORDER_OWNER_COLUMNS, '')
+  const customerEmail = firstString(row, ['customer_email', 'email'], email)
+  const profileName = firstString(profile, ['full_name', 'name'], '')
+  const customerName = firstString(row, ['customer_name', 'recipient_name', 'delivery_name', 'full_name', 'name'], '')
+  const displayName = customerName || profileName || (customerEmail ? customerEmail.split('@')[0] : 'Customer')
+
   return {
     id: userId,
-    name: email ? email.split('@')[0] : 'Customer',
-    email,
-    phone: '',
+    name: displayName,
+    email: customerEmail,
+    phone: firstString(row, ['customer_phone', 'recipient_phone', 'delivery_phone', 'phone', 'whatsapp'], firstString(profile, ['phone'], '')),
+    avatar: firstString(profile, ['avatar_url'], ''),
     role: 'customer',
-    dzongkhag: '',
+    dzongkhag: firstString(row, ['dzongkhag', 'delivery_dzongkhag', 'delivery_city'], ''),
     isActive: true,
-    createdAt: new Date().toISOString(),
+    createdAt: firstString(row, ['created_at'], new Date().toISOString()),
   }
 }
 
@@ -202,19 +318,20 @@ function makeDeliveryHub(row: AnyRow): DeliveryHub {
   }
 }
 
-function makeShippingAddress(row: AnyRow, userId: string): Address {
+function makeShippingAddress(row: AnyRow, userId: string, profiles: AnyRow[] = []): Address {
   const nested = firstJsonObject(row, ['shipping_address', 'delivery_address_json', 'address'])
-  const source = { ...row, ...nested }
+  const profile = findProfileForOrder(row, profiles)
+  const source = { ...profile, ...row, ...nested }
 
   return {
     id: firstString(source, ['shipping_address_id', 'address_id'], `addr-${row.id ?? 'order'}`),
     userId,
     label: firstString(source, ['address_label', 'label'], 'Delivery'),
-    recipientName: firstString(source, ['recipient_name', 'delivery_name', 'customer_name', 'full_name'], 'Customer'),
-    phone: firstString(source, ['recipient_phone', 'delivery_phone', 'phone', 'whatsapp'], ''),
+    recipientName: firstString(source, ['recipient_name', 'delivery_name', 'customer_name', 'full_name', 'name'], 'Customer'),
+    phone: firstString(source, ['recipient_phone', 'delivery_phone', 'customer_phone', 'phone', 'whatsapp'], ''),
     dzongkhag: firstString(source, ['dzongkhag', 'delivery_dzongkhag', 'delivery_city'], ''),
     gewog: firstString(source, ['gewog', 'delivery_gewog'], ''),
-    village: firstString(source, ['village', 'delivery_village', 'delivery_address'], ''),
+    village: firstString(source, ['village', 'delivery_village', 'delivery_address', 'address_line1'], ''),
     landmark: firstString(source, ['landmark', 'delivery_landmark'], ''),
     isDefault: false,
     deliveryHubId: firstString(source, ['delivery_hub_id', 'hub_id'], 'hub1'),
@@ -233,18 +350,28 @@ function paymentBelongsToOrder(payment: AnyRow, row: AnyRow) {
   return String(payment.order_id ?? '') === String(row.id ?? '')
 }
 
-function makeOrderItems(row: AnyRow, relatedItems: AnyRow[]): OrderItem[] {
-  const mappedItems = relatedItems.map((item, index) => ({
-    id: firstString(item, ['id'], `item-${row.id}-${index}`),
-    productId: firstString(item, ['product_id'], ''),
-    sourceUrl: firstString(item, ['source_url', 'product_url', 'url'], ''),
-    sourcePlatform: firstString(item, ['source_platform', 'platform'], 'internal') as OrderItem['sourcePlatform'],
-    productName: firstString(item, ['title_snapshot', 'product_name', 'item_name', 'name', 'title'], 'Product item'),
-    productImage: firstString(item, ['image_path', 'attachment_path', 'product_image', 'image_url', 'image', 'screenshot_url'], PLACEHOLDER_PRODUCT_IMAGE),
-    quantity: firstNumber(item, ['quantity', 'qty'], 1),
-    unitPrice: firstNumber(item, ['quoted_unit_price', 'estimated_price', 'unit_price', 'price', 'quoted_price', 'product_price'], 0),
-    attributes: firstJsonObject(item, ['attributes', 'selected_attributes']) as Record<string, string>,
-  }))
+async function makeOrderItems(row: AnyRow, relatedItems: AnyRow[]): Promise<OrderItem[]> {
+  const mappedItems = await Promise.all(
+    relatedItems.map(async (item, index) => {
+      const attachmentPath = firstString(item, ['attachment_path', 'screenshot_path', 'proof_file_path'], '')
+      const productImage = await makeDisplayImage(
+        firstString(item, ['product_image', 'image_url', 'image', 'thumbnail_url', 'image_path', 'screenshot_url'], ''),
+        attachmentPath
+      )
+
+      return {
+        id: firstString(item, ['id'], `item-${row.id}-${index}`),
+        productId: firstString(item, ['product_id'], ''),
+        sourceUrl: firstString(item, ['source_url', 'product_url', 'url'], ''),
+        sourcePlatform: firstString(item, ['source_platform', 'platform'], 'internal') as OrderItem['sourcePlatform'],
+        productName: firstString(item, ['title_snapshot', 'product_name', 'item_name', 'name', 'title'], 'Product item'),
+        productImage,
+        quantity: firstNumber(item, ['quantity', 'qty'], 1),
+        unitPrice: firstNumber(item, ['quoted_unit_price', 'estimated_price', 'unit_price', 'price', 'quoted_price', 'product_price'], 0),
+        attributes: firstJsonObject(item, ['attributes', 'selected_attributes']) as Record<string, string>,
+      }
+    })
+  )
 
   if (mappedItems.length > 0) return mappedItems
 
@@ -264,13 +391,15 @@ function makeOrderItems(row: AnyRow, relatedItems: AnyRow[]): OrderItem[] {
     }))
   }
 
+  const screenshotUrl = await makeDisplayImage(firstString(row, ['product_image', 'image_url', 'screenshot_url'], ''))
+
   return [
     {
       id: `item-${row.id}-fallback`,
       sourceUrl: firstString(row, ['product_url', 'source_url'], ''),
       sourcePlatform: 'internal',
       productName: firstString(row, ['product_name', 'item_name', 'title'], 'Order item'),
-      productImage: firstString(row, ['product_image', 'image_url', 'screenshot_url'], PLACEHOLDER_PRODUCT_IMAGE),
+      productImage: screenshotUrl,
       quantity: firstNumber(row, ['quantity', 'qty'], 1),
       unitPrice: firstNumber(row, ['unit_price', 'product_price', 'amount'], 0),
       attributes: {},
@@ -310,7 +439,11 @@ function makeQuotation(quotation: AnyRow | undefined, orderItems: OrderItem[], q
   if (!quotation) return undefined
 
   const items = makeQuotationItems(quotation, orderItems, quotationItems)
-  const productTotal = firstNumber(quotation, ['product_subtotal', 'product_total', 'product_price', 'subtotal'], items.reduce((sum, item) => sum + item.totalPrice, 0))
+  const productTotal = firstNumber(
+    quotation,
+    ['product_subtotal', 'product_total', 'product_price', 'subtotal'],
+    items.reduce((sum, item) => sum + item.totalPrice, 0)
+  )
   const serviceCharge = firstNumber(quotation, ['service_charge', 'service_fee'], 0)
   const deliveryFee = firstNumber(quotation, ['delivery_fee', 'shipping_fee'], 0)
   const taxAmount = firstNumber(quotation, ['tax_amount', 'tax'], 0)
@@ -333,8 +466,11 @@ function makeQuotation(quotation: AnyRow | undefined, orderItems: OrderItem[], q
   }
 }
 
-function makePayment(payment: AnyRow | undefined): Payment | undefined {
+async function makePayment(payment: AnyRow | undefined): Promise<Payment | undefined> {
   if (!payment) return undefined
+
+  const proofPath = firstString(payment, ['proof_file_path', 'screenshot_url', 'payment_proof_url', 'proof_url'], '')
+  const screenshotUrl = await makeSignedScreenshotUrl(proofPath)
 
   return {
     id: firstString(payment, ['id'], ''),
@@ -342,35 +478,39 @@ function makePayment(payment: AnyRow | undefined): Payment | undefined {
     amount: firstNumber(payment, ['amount', 'total_amount', 'advance_paid'], 0),
     method: firstString(payment, ['method', 'payment_method'], ''),
     transactionId: firstString(payment, ['transaction_id', 'reference_id', 'txn_id'], ''),
-    screenshotUrl: firstString(payment, ['proof_file_path', 'screenshot_url', 'payment_proof_url', 'proof_url'], ''),
+    screenshotUrl: screenshotUrl || proofPath,
     status: normalizePaymentStatus(firstValue(payment, ['status'])),
     verifiedBy: firstString(payment, ['verified_by'], ''),
     verifiedAt: firstString(payment, ['verified_at'], ''),
-    notes: firstString(payment, ['notes'], ''),
+    notes: firstString(payment, ['notes', 'admin_notes'], ''),
     createdAt: firstString(payment, ['created_at'], ''),
   }
 }
 
-function mapOrderRow(row: AnyRow, related: RelatedRows, authUserId: string, authEmail = ''): Order {
-  const items = makeOrderItems(row, related.items.filter((item) => itemBelongsToOrder(item, row)))
+async function mapOrderRow(row: AnyRow, related: RelatedRows, authUserId: string, authEmail = ''): Promise<Order> {
+  const items = await makeOrderItems(row, related.items.filter((item) => itemBelongsToOrder(item, row)))
   const quotationRow = related.quotations.find((quotation) => quotationBelongsToOrder(quotation, row))
   const paymentRow = related.payments.find((payment) => paymentBelongsToOrder(payment, row))
   const customerId = firstString(row, ORDER_OWNER_COLUMNS, authUserId)
 
   return {
     id: firstString(row, ['id'], ''),
-    orderNumber: firstString(row, ['order_no', 'order_number', 'order_id', 'public_id'], firstString(row, ['id'], '').slice(0, 8).toUpperCase()),
+    orderNumber: firstString(
+      row,
+      ['order_no', 'order_number', 'public_id'],
+      firstString(row, ['id'], '').slice(0, 8).toUpperCase()
+    ),
     userId: customerId,
-    user: makeFallbackUser(customerId, authEmail),
+    user: makeFallbackUser(row, authEmail, related.profiles),
     items,
     status: normalizeOrderStatus(firstValue(row, ['status', 'order_status'])),
-    type: firstString(row, ['type', 'order_type'], 'paste_link') as OrderType,
+    type: firstString(row, ['order_type', 'type'], 'paste_link') as OrderType,
     deliveryHubId: firstString(row, ['delivery_hub_id', 'hub_id'], 'hub1'),
     deliveryHub: makeDeliveryHub(row),
-    shippingAddress: makeShippingAddress(row, customerId),
+    shippingAddress: makeShippingAddress(row, customerId, related.profiles),
     quotation: makeQuotation(quotationRow, items, related.quotationItems),
-    payment: makePayment(paymentRow),
-    notes: firstString(row, ['notes', 'customer_notes'], ''),
+    payment: await makePayment(paymentRow),
+    notes: firstString(row, ['notes', 'customer_notes', 'admin_notes'], ''),
     createdAt: firstString(row, ['created_at'], ''),
     updatedAt: firstString(row, ['updated_at'], firstString(row, ['created_at'], '')),
   }
@@ -394,19 +534,24 @@ async function safeSelectIn(table: string, column: string, values: string[]) {
 
 async function fetchRelatedRows(orderRows: AnyRow[]): Promise<RelatedRows> {
   const dbIds = orderRows.map((row) => String(row.id ?? '')).filter(Boolean)
+  const ownerIds = orderRows
+    .flatMap((row) => ORDER_OWNER_COLUMNS.map((column) => String(row[column] ?? '')))
+    .filter(Boolean)
 
-  const itemsByDbId = await safeSelectIn('order_items', 'order_id', dbIds)
+  const items = await safeSelectIn('order_items', 'order_id', dbIds)
   const quotations = await safeSelectIn('quotations', 'order_id', dbIds)
   const payments = await safeSelectIn('payments', 'order_id', dbIds)
+  const profiles = await safeSelectIn('profiles', 'id', Array.from(new Set(ownerIds)))
 
   const quotationIds = quotations.map((quote) => String(quote.id ?? '')).filter(Boolean)
   const quotationItems = await safeSelectIn('quotation_items', 'quotation_id', quotationIds)
 
   return {
-    items: itemsByDbId,
+    items,
     quotations,
     quotationItems,
     payments,
+    profiles,
   }
 }
 
@@ -428,12 +573,11 @@ async function queryCustomerOrderRows(userId: string) {
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unable to load customer orders.')
+  throw new Error(errorMessage(lastError, 'Unable to load customer orders.'))
 }
 
-async function querySingleOrderRow(orderIdOrNumber: string, userId: string) {
+async function querySingleCustomerOrderRow(orderIdOrNumber: string, userId: string) {
   const lookupColumns = isUuidLike(orderIdOrNumber) ? ['id'] : ['order_no']
-
   let lastError: unknown = null
 
   for (const lookupColumn of lookupColumns) {
@@ -445,9 +589,7 @@ async function querySingleOrderRow(orderIdOrNumber: string, userId: string) {
 
     if (!error && data) {
       const ownerValue = firstString(data as AnyRow, ORDER_OWNER_COLUMNS, '')
-      if (ownerValue && ownerValue !== userId) {
-        throw new Error('Order not found.')
-      }
+      if (ownerValue && ownerValue !== userId) throw new Error('Order not found.')
       return data as AnyRow
     }
 
@@ -459,7 +601,35 @@ async function querySingleOrderRow(orderIdOrNumber: string, userId: string) {
     }
   }
 
-  if (lastError && !isMissingColumnOrRelationError(lastError)) throw lastError
+  if (lastError && !isMissingColumnOrRelationError(lastError)) {
+    throw new Error(errorMessage(lastError, 'Unable to load order.'))
+  }
+
+  return null
+}
+
+async function querySingleAdminOrderRow(orderIdOrNumber: string) {
+  const lookupColumns = isUuidLike(orderIdOrNumber) ? ['id'] : ['order_no']
+  let lastError: unknown = null
+
+  for (const lookupColumn of lookupColumns) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq(lookupColumn, orderIdOrNumber)
+      .maybeSingle()
+
+    if (!error && data) return data as AnyRow
+    if (!error && !data) continue
+
+    lastError = error
+    if (!isMissingColumnOrRelationError(error)) throw error
+  }
+
+  if (lastError && !isMissingColumnOrRelationError(lastError)) {
+    throw new Error(errorMessage(lastError, 'Unable to load admin order.'))
+  }
+
   return null
 }
 
@@ -469,17 +639,41 @@ export async function fetchCustomerOrders(userId: string, email = '') {
   const rows = await queryCustomerOrderRows(userId)
   const related = await fetchRelatedRows(rows)
 
-  return rows.map((row) => mapOrderRow(row, related, userId, email))
+  return Promise.all(rows.map((row) => mapOrderRow(row, related, userId, email)))
 }
 
 export async function fetchCustomerOrderById(orderIdOrNumber: string, userId: string, email = '') {
   if (!orderIdOrNumber || !userId) return null
 
-  const row = await querySingleOrderRow(orderIdOrNumber, userId)
+  const row = await querySingleCustomerOrderRow(orderIdOrNumber, userId)
   if (!row) return null
 
   const related = await fetchRelatedRows([row])
   return mapOrderRow(row, related, userId, email)
+}
+
+export async function fetchAdminOrders() {
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+
+  const rows = (data ?? []) as AnyRow[]
+  const related = await fetchRelatedRows(rows)
+
+  return Promise.all(rows.map((row) => mapOrderRow(row, related, firstString(row, ORDER_OWNER_COLUMNS, ''), firstString(row, ['customer_email', 'email'], ''))))
+}
+
+export async function fetchAdminOrderById(orderIdOrNumber: string) {
+  if (!orderIdOrNumber) return null
+
+  const row = await querySingleAdminOrderRow(orderIdOrNumber)
+  if (!row) return null
+
+  const related = await fetchRelatedRows([row])
+  return mapOrderRow(row, related, firstString(row, ORDER_OWNER_COLUMNS, ''), firstString(row, ['customer_email', 'email'], ''))
 }
 
 export async function updateQuotationStatus(quotationId: string, status: QuotationStatus) {
@@ -507,21 +701,16 @@ export async function updateCustomerOrderStatus(orderId: string, status: OrderSt
   if (legacy.error) throw standard.error
 }
 
-function makeStoragePath(userId: string, orderId: string, file: File) {
+function makeStoragePath(userId: string, orderId: string, file: File, prefix = 'payment') {
   const rawExt = file.name.split('.').pop()?.toLowerCase() || 'jpg'
   const ext = rawExt.replace(/[^a-z0-9]/g, '') || 'jpg'
-  return `${userId}/${orderId}/payment-${Date.now()}.${ext}`
+  return `${userId}/${orderId}/${prefix}-${Date.now()}.${ext}`
 }
 
 async function findExistingPayment(order: Order) {
   if (order.payment?.id) return order.payment
 
-  const dbLookup = await supabase
-    .from('payments')
-    .select('*')
-    .eq('order_id', order.id)
-    .maybeSingle()
-
+  const dbLookup = await supabase.from('payments').select('*').eq('order_id', order.id).maybeSingle()
   if (!dbLookup.error && dbLookup.data) return makePayment(dbLookup.data as AnyRow)
 
   return undefined
@@ -529,12 +718,8 @@ async function findExistingPayment(order: Order) {
 
 function paymentMethodToDbValue(paymentMethodName: string) {
   const raw = paymentMethodName.toLowerCase()
-  if (raw.includes('wallet') || raw.includes('mbo') || raw.includes('mpay') || raw.includes('mobile')) {
-    return 'mobile_wallet'
-  }
-  if (raw.includes('bank') || raw.includes('transfer') || raw.includes('bob') || raw.includes('bnb') || raw.includes('tbank')) {
-    return 'bank_transfer'
-  }
+  if (raw.includes('wallet') || raw.includes('mbo') || raw.includes('mpay') || raw.includes('mobile')) return 'mobile_wallet'
+  if (raw.includes('bank') || raw.includes('transfer') || raw.includes('bob') || raw.includes('bnb') || raw.includes('tbank')) return 'bank_transfer'
   return 'other'
 }
 
@@ -565,14 +750,15 @@ async function insertPaymentWithKnownSchema(payload: {
 
     if (!error) return
     lastError = error
+    if (!shouldTryFallbackPayload(error)) throw error
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unable to create payment row. Check public.payment_type enum values.')
+  throw new Error(errorMessage(lastError, 'Unable to create payment row. Check public.payment_type enum values.'))
 }
 
 export async function submitCustomerPaymentProof(input: PaymentProofInput) {
   const { order, userId, file, paymentMethodName, transactionId, amount } = input
-  const path = makeStoragePath(userId, order.id, file)
+  const path = makeStoragePath(userId, order.id, file, 'payment')
 
   const { error: uploadError } = await supabase.storage.from('order-screenshots').upload(path, file, {
     cacheControl: '3600',
@@ -631,51 +817,6 @@ export async function submitCustomerPaymentProof(input: PaymentProofInput) {
   return { path }
 }
 
-
-// ============ Step 06C: Product-link preview + paste-link customer order creation ============
-
-export type ProductLinkPreview = {
-  url: string
-  platform: string
-  title: string
-  image?: string
-  price?: number
-  currency?: string
-  fetched: boolean
-  message?: string
-}
-
-export type PasteLinkOrderItemInput = {
-  sourceUrl?: string
-  sourcePlatform?: string
-  productName?: string
-  productImage?: string
-  price?: number
-  quantity?: number
-  notes?: string
-  screenshotFile?: File
-  attachmentPath?: string
-}
-
-export type SubmitPasteLinkOrderInput = {
-  userId: string
-  email?: string | null
-  customerName: string
-  customerPhone: string
-  deliveryAddress?: string | null
-  customerNotes?: string | null
-  items: PasteLinkOrderItemInput[]
-}
-
-export type SubmitPasteLinkOrderResult = {
-  orderId: string
-  orderNo: string
-}
-
-function cleanText(value: unknown) {
-  return String(value ?? '').trim()
-}
-
 export function normalizeProductUrl(value: string) {
   const trimmed = cleanText(value)
   if (!trimmed) return ''
@@ -731,23 +872,17 @@ function fallbackProductPreview(url: string, message?: string): ProductLinkPrevi
 }
 
 function pickPreviewObject(raw: AnyRow): AnyRow {
-  // Accept all common Edge Function response contracts:
-  // {title,image,price}, {preview:{...}}, {product:{...}}, {data:{...}}, or {ok:true, product:{...}}.
   const candidates = [raw.preview, raw.product, raw.item, raw.data, raw.result, raw]
 
   for (const candidate of candidates) {
-    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-      return candidate as AnyRow
-    }
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate as AnyRow
   }
 
   return raw
 }
 
 function parsePreviewPrice(value: unknown) {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) && value > 0 ? value : undefined
-  }
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined
 
   const clean = String(value ?? '')
     .replace(/,/g, '')
@@ -758,21 +893,11 @@ function parsePreviewPrice(value: unknown) {
 }
 
 function normalizePreviewPayload(payload: unknown, requestedUrl: string): ProductLinkPreview {
-  const raw = (payload ?? {}) as AnyRow
+  const raw = (payload && typeof payload === 'object' ? payload : {}) as AnyRow
   const preview = pickPreviewObject(raw)
-
-  const rawUrl =
-    preview.url ||
-    preview.sourceUrl ||
-    preview.productUrl ||
-    preview.link ||
-    raw.url ||
-    requestedUrl
-
+  const rawUrl = preview.url || preview.sourceUrl || preview.productUrl || raw.url
   const normalizedUrl = normalizeProductUrl(String(rawUrl ?? requestedUrl)) || requestedUrl
-  const platform =
-    cleanText(preview.platform || preview.sourcePlatform || raw.platform) ||
-    detectSourcePlatformFromUrl(normalizedUrl)
+  const platform = cleanText(preview.platform || preview.sourcePlatform || raw.platform) || detectSourcePlatformFromUrl(normalizedUrl)
 
   const title =
     cleanText(
@@ -829,14 +954,10 @@ function normalizePreviewPayload(payload: unknown, requestedUrl: string): Produc
 export async function fetchProductLinkPreview(url: string): Promise<ProductLinkPreview> {
   const normalizedUrl = normalizeProductUrl(url)
 
-  if (!normalizedUrl) {
-    return fallbackProductPreview(url, 'Please enter a valid product URL.')
-  }
+  if (!normalizedUrl) return fallbackProductPreview(url, 'Please enter a valid product URL.')
 
   try {
-    const invokePromise = supabase.functions.invoke('product-link-preview', {
-      body: { url: normalizedUrl },
-    })
+    const invokePromise = supabase.functions.invoke('product-link-preview', { body: { url: normalizedUrl } })
 
     const timeoutPromise = new Promise<{ data: null; error: Error }>((resolve) => {
       window.setTimeout(() => {
@@ -874,74 +995,84 @@ export async function fetchProductLinkPreview(url: string): Promise<ProductLinkP
   }
 }
 
-function isEnumError(error: unknown) {
-  const message = String((error as { message?: string })?.message ?? '').toLowerCase()
-  return (
-    message.includes('invalid input value for enum') ||
-    message.includes('violates check constraint') ||
-    message.includes('not present in enum')
-  )
+function makeOrderPayloadCandidates(input: SubmitPasteLinkOrderInput): AnyRow[] {
+  const customerNotes =
+    cleanText(input.customerNotes) ||
+    `Paste-link order submitted by customer. Name: ${cleanText(input.customerName)}. Phone: ${cleanText(input.customerPhone)}.`
+
+  const base: AnyRow = {
+    user_id: input.userId,
+    customer_name: cleanText(input.customerName),
+    customer_phone: cleanText(input.customerPhone),
+    customer_email: cleanText(input.email),
+    delivery_address: cleanText(input.deliveryAddress) || null,
+    customer_notes: customerNotes,
+  }
+
+  return [
+    { ...base, order_type: 'paste_link' },
+    { ...base, order_type: 'external_link' },
+    { ...base, type: 'paste_link' },
+    {
+      user_id: input.userId,
+      order_type: 'paste_link',
+      notes: customerNotes,
+    },
+    {
+      user_id: input.userId,
+      type: 'paste_link',
+      notes: customerNotes,
+    },
+  ]
 }
 
 async function insertPasteLinkOrderRow(input: SubmitPasteLinkOrderInput) {
-  const orderTypeCandidates = ['paste_link', 'external_link', 'link_order']
-
   let lastError: unknown = null
 
-  for (const orderType of orderTypeCandidates) {
-    const { data, error } = await supabase
-      .from('orders')
-      .insert({
-        user_id: input.userId,
-        order_type: orderType,
-        customer_name: cleanText(input.customerName),
-        customer_phone: cleanText(input.customerPhone),
-        customer_email: cleanText(input.email),
-        delivery_address: cleanText(input.deliveryAddress) || null,
-        customer_notes: cleanText(input.customerNotes) || null,
-      })
-      .select('id, order_no')
-      .single()
+  for (const payload of makeOrderPayloadCandidates(input)) {
+    const { data, error } = await supabase.from('orders').insert(payload as any).select('id, order_no').single()
 
-    if (!error && data) {
-      return data as { id: string; order_no: string | null }
-    }
+    if (!error && data) return data as { id: string; order_no: string | null }
 
     lastError = error
-
-    if (error && !isEnumError(error)) {
-      throw error
-    }
+    if (error && !shouldTryFallbackPayload(error)) throw error
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unable to create paste-link order.')
+  throw new Error(errorMessage(lastError, 'Unable to create paste-link order.'))
 }
 
 function makeOrderItemPayloads(params: {
   orderId: string
-  itemType: string
+  itemType?: string
   items: PasteLinkOrderItemInput[]
   forceOtherPlatform?: boolean
+  compact?: boolean
 }) {
   return params.items.map((item) => {
     const sourceUrl = normalizeProductUrl(item.sourceUrl || '') || cleanText(item.sourceUrl) || ''
     const detectedPlatform = detectSourcePlatformFromUrl(sourceUrl)
-    const dbPlatform = params.forceOtherPlatform
-      ? 'other'
-      : platformToDbValue(item.sourcePlatform || detectedPlatform || sourceUrl)
-
+    const dbPlatform = params.forceOtherPlatform ? 'other' : platformToDbValue(item.sourcePlatform || detectedPlatform || sourceUrl)
     const quantity = Number(item.quantity ?? 1)
     const price = Number(item.price ?? 0)
     const itemNotes = cleanText(item.notes)
+    const titleSnapshot =
+      cleanText(item.productName) || (item.screenshotFile ? 'Screenshot product request' : productNameFromPlatform(dbPlatform))
+
+    if (params.compact) {
+      return {
+        order_id: params.orderId,
+        source_url: sourceUrl || null,
+        product_name: titleSnapshot,
+        quantity: Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1,
+      }
+    }
 
     return {
       order_id: params.orderId,
-      item_type: params.itemType,
+      ...(params.itemType ? { item_type: params.itemType } : {}),
       source_platform: dbPlatform,
-      source_url: sourceUrl,
-      title_snapshot:
-        cleanText(item.productName) ||
-        (item.screenshotFile ? 'Screenshot product request' : productNameFromPlatform(dbPlatform)),
+      source_url: sourceUrl || null,
+      title_snapshot: titleSnapshot,
       image_path: cleanText(item.productImage) || null,
       attachment_path: cleanText(item.attachmentPath) || null,
       variant_text: itemNotes || null,
@@ -954,55 +1085,47 @@ function makeOrderItemPayloads(params: {
 
 async function insertPasteLinkOrderItems(orderId: string, items: PasteLinkOrderItemInput[]) {
   const itemTypeCandidates = ['paste_link', 'external_link', 'link', 'other']
-
   let lastError: unknown = null
 
   for (const forceOtherPlatform of [false, true]) {
     for (const itemType of itemTypeCandidates) {
-      const payloads = makeOrderItemPayloads({
-        orderId,
-        itemType,
-        items,
-        forceOtherPlatform,
-      })
-
-      const { error } = await supabase.from('order_items').insert(payloads)
+      const payloads = makeOrderItemPayloads({ orderId, itemType, items, forceOtherPlatform })
+      const { error } = await supabase.from('order_items').insert(payloads as any)
 
       if (!error) return
-
       lastError = error
-
-      if (error && !isEnumError(error)) {
-        throw error
-      }
+      if (error && !shouldTryFallbackPayload(error)) throw error
     }
+
+    const noItemTypePayloads = makeOrderItemPayloads({ orderId, items, forceOtherPlatform })
+    const { error } = await supabase.from('order_items').insert(noItemTypePayloads as any)
+    if (!error) return
+
+    lastError = error
+    if (error && !shouldTryFallbackPayload(error)) throw error
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unable to create paste-link order items.')
+  const compactPayloads = makeOrderItemPayloads({ orderId, items, compact: true })
+  const { error } = await supabase.from('order_items').insert(compactPayloads as any)
+  if (!error) return
+
+  throw new Error(errorMessage(error || lastError, 'Unable to create paste-link order items.'))
 }
 
-async function uploadOrderItemScreenshots(
-  userId: string,
-  orderId: string,
-  items: PasteLinkOrderItemInput[]
-): Promise<string[]> {
+async function uploadOrderItemScreenshots(userId: string, orderId: string, items: PasteLinkOrderItemInput[]): Promise<string[]> {
   const uploadedPaths: string[] = []
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     if (!item.screenshotFile) continue
 
-    const rawExt = item.screenshotFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-    const ext = rawExt.replace(/[^a-z0-9]/g, '') || 'jpg'
-    const path = `${userId}/${orderId}/request-item-${i + 1}-${Date.now()}.${ext}`
+    const path = makeStoragePath(userId, orderId, item.screenshotFile, `request-item-${i + 1}`)
 
-    const { error: uploadError } = await supabase.storage
-      .from('order-screenshots')
-      .upload(path, item.screenshotFile, {
-        cacheControl: '3600',
-        contentType: item.screenshotFile.type || 'image/jpeg',
-        upsert: false,
-      })
+    const { error: uploadError } = await supabase.storage.from('order-screenshots').upload(path, item.screenshotFile, {
+      cacheControl: '3600',
+      contentType: item.screenshotFile.type || 'image/jpeg',
+      upsert: false,
+    })
 
     if (uploadError) {
       console.warn(`[customerOrders] Screenshot upload failed for item ${i + 1}:`, uploadError)
@@ -1017,7 +1140,7 @@ async function uploadOrderItemScreenshots(
 }
 
 async function addCustomerSubmittedTrackingEvent(orderId: string, userId: string) {
-  const statusCandidates = ['pending', 'pending_confirmation']
+  const statusCandidates = ['pending_confirmation', 'pending']
 
   for (const status of statusCandidates) {
     const { error } = await supabase.from('tracking_events').insert({
@@ -1031,8 +1154,7 @@ async function addCustomerSubmittedTrackingEvent(orderId: string, userId: string
     })
 
     if (!error) return
-
-    if (!isEnumError(error)) {
+    if (!shouldTryFallbackPayload(error)) {
       console.warn('[customerOrders] tracking event skipped:', error)
       return
     }
@@ -1040,22 +1162,14 @@ async function addCustomerSubmittedTrackingEvent(orderId: string, userId: string
 }
 
 export async function submitPasteLinkOrder(input: SubmitPasteLinkOrderInput): Promise<SubmitPasteLinkOrderResult> {
-  if (!input.userId) {
-    throw new Error('Please sign in before submitting your order.')
-  }
-
-  if (!cleanText(input.customerName)) {
-    throw new Error('Customer name is required.')
-  }
-
-  if (!cleanText(input.customerPhone)) {
-    throw new Error('Phone number is required.')
-  }
+  if (!input.userId) throw new Error('Please sign in before submitting your order.')
+  if (!cleanText(input.customerName)) throw new Error('Customer name is required.')
+  if (!cleanText(input.customerPhone)) throw new Error('Phone number is required.')
 
   const cleanItems = input.items
     .map((item) => ({
       ...item,
-      sourceUrl: item.sourceUrl ? (normalizeProductUrl(item.sourceUrl) || cleanText(item.sourceUrl)) : '',
+      sourceUrl: item.sourceUrl ? normalizeProductUrl(item.sourceUrl) || cleanText(item.sourceUrl) : '',
       productName: cleanText(item.productName),
       productImage: cleanText(item.productImage),
       notes: cleanText(item.notes),
@@ -1064,34 +1178,25 @@ export async function submitPasteLinkOrder(input: SubmitPasteLinkOrderInput): Pr
     }))
     .filter((item) => item.sourceUrl || item.screenshotFile)
 
-  if (cleanItems.length === 0) {
-    throw new Error('Please add at least one product link or screenshot.')
-  }
+  if (cleanItems.length === 0) throw new Error('Please add at least one product link or screenshot.')
 
-  const orderRow = await insertPasteLinkOrderRow({
-    ...input,
-    items: cleanItems,
-  })
+  const orderRow = await insertPasteLinkOrderRow({ ...input, items: cleanItems })
+  const uploadedPaths: string[] = []
 
   try {
-    await uploadOrderItemScreenshots(input.userId, orderRow.id, cleanItems)
-  } catch (error) {
-    console.warn('[customerOrders] Screenshot upload had issues:', error)
-  }
-
-  try {
+    uploadedPaths.push(...(await uploadOrderItemScreenshots(input.userId, orderRow.id, cleanItems)))
     await insertPasteLinkOrderItems(orderRow.id, cleanItems)
+    await addCustomerSubmittedTrackingEvent(orderRow.id, input.userId)
   } catch (error) {
     try {
+      if (uploadedPaths.length > 0) await supabase.storage.from('order-screenshots').remove(uploadedPaths)
       await supabase.from('orders').delete().eq('id', orderRow.id).eq('user_id', input.userId)
     } catch (cleanupError) {
-      console.warn('[customerOrders] cleanup after failed paste-link item insert failed:', cleanupError)
+      console.warn('[customerOrders] cleanup after failed paste-link submit failed:', cleanupError)
     }
 
     throw error
   }
-
-  await addCustomerSubmittedTrackingEvent(orderRow.id, input.userId)
 
   return {
     orderId: orderRow.id,
