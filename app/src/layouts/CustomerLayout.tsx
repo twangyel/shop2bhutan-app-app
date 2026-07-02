@@ -88,7 +88,7 @@ export default function CustomerLayout() {
                       className={isActive ? 'text-amber-500' : 'text-neutral-400'}
                     />
                     {showBadge && (
-                      <span className="absolute -right-2.5 -top-2 flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
+                      <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
                         {bagCount > 99 ? '99+' : bagCount}
                       </span>
                     )}
