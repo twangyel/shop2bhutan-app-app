@@ -578,7 +578,7 @@ export const appSettings = {
     dzongkhags: DZONGKHAGS,
     totalCount: DZONGKHAGS.length,
     label: 'Orders accepted from all 20 dzongkhags',
-    shortLabel: 'Orders from all 20 dzongkhags',
+    shortLabel: 'Orders accepted from all 20 dzongkhags',
   },
   // Delivery hubs: where customers can pick up orders
   deliveryHubs: {
@@ -587,7 +587,7 @@ export const appSettings = {
     activeHubNames: deliveryHubs.filter(h => h.isActive).map(h => h.name),
     hubNamesShort: deliveryHubs.filter(h => h.isActive).map(h => h.name.replace(' Hub', '')),
     hubNamesJoined: deliveryHubs.filter(h => h.isActive).map(h => h.name.replace(' Hub', '')).join(', '),
-    pickupLine: 'Pickup/delivery hubs currently available in Thimphu, Phuntsholing, and Paro.',
+    pickupLine: 'Delivery currently available in Thimphu, Paro, and Chhukha.',
   },
 };
 

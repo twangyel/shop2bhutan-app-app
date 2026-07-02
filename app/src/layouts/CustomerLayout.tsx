@@ -13,7 +13,7 @@ export default function CustomerLayout() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const hideTabBarPaths = ['/login', '/register', '/forgot-password', '/checkout']
+  const hideTabBarPaths = ['/login', '/register', '/forgot-password', '/checkout', '/change-password']
   const shouldHideTabBar =
     hideTabBarPaths.some((p) => location.pathname === p) ||
     location.pathname.startsWith('/payment/') ||

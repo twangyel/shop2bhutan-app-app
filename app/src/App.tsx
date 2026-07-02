@@ -29,6 +29,7 @@ import ParcelBooking from '@/pages/customer/ParcelBooking';
 import MyParcels from '@/pages/customer/MyParcels';
 import Shop from '@/pages/customer/Shop';
 import ResetPassword from '@/pages/customer/ResetPassword';
+import ChangePassword from '@/pages/customer/ChangePassword';
 
 // Admin Pages
 import Dashboard from '@/pages/admin/Dashboard';
@@ -57,7 +58,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
-<Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Customer Routes */}
           <Route element={<CustomerLayout />}>
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="/order/:id" element={<OrderDetail />} />
             <Route path="/account" element={<Account />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/addresses" element={<Addresses />} />
             <Route path="/support" element={<Support />} />
             <Route path="/notifications" element={<Notifications />} />
@@ -80,7 +82,6 @@ export default function App() {
             <Route path="/parcel-booking/:tripId" element={<ParcelBooking />} />
             <Route path="/my-parcels" element={<MyParcels />} />
             <Route path="/shop" element={<Shop />} />
-
           </Route>
 
           {/* Admin Routes */}
