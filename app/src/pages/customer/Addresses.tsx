@@ -12,7 +12,6 @@ import {
   Star,
   Trash2,
   Truck,
-  User,
   X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
